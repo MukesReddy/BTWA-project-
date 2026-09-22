@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manage Categories — FoodieHub Admin</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div class="admin-layout">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <a href="/admin.html" class="sidebar-link"><span class="icon">📊</span> Dashboard</a>
+        <a href="/admin-food.html" class="sidebar-link"><span class="icon">🍔</span> Foods</a>
+        <a href="/admin-categories.html" class="sidebar-link active"><span class="icon">📂</span> Categories</a>
+        <a href="/admin-orders.html" class="sidebar-link"><span class="icon">📋</span> Orders</a>
+        <a href="/admin-users.html" class="sidebar-link"><span class="icon">👥</span> Users</a>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">📂 Categories</h1>
+          <p class="page-subtitle">Manage food categories</p>
+        </div>
+        <button class="btn btn-primary" onclick="openModal()">+ Add Category</button>
+      </div>
+      <div id="alertBox" style="margin-bottom:1rem"></div>
+      <div id="catTable" class="loading-overlay"><div class="spinner"></div></div>
+    </main>
+  </div>
+
+  <!-- Category Modal -->
+  <div id="catModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modalTitle">Add Category</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="modalAlert" style="margin-bottom:1rem"></div>
+        <form id="catForm">
+          <div class="form-group">
+            <label class="form-label">Category Name *</label>
+            <input type="text" id="cName" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea id="cDesc" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Image URL</label>
+            <input type="url" id="cImage" class="form-control" placeholder="https://…" />
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveCategory()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/main.js"></script>
+  <script>
+    let editingId = null;
+
+    async function guardAdmin() {
+      const user = await fetchCurrentUser();
+      if (!user || user.role !== 'admin') { window.location.href = '/login.html'; return false; }
+      return true;
+    }
+
+    async function loadCategories() {
+      if (!await guardAdmin()) return;
+      const { ok, data } = await apiCall('GET', '/categories');
+      const table = document.getElementById('catTable');
+      if (!ok) { table.innerHTML = '<p class="text-muted text-center">Error.</p>'; return; }
+
+      const cats = data.data;
+      if (!cats.length) {
+        table.innerHTML = `<div class="empty-state"><div class="icon">📂</div><h3>No categories</h3><button class="btn btn-primary" onclick="openModal()">Add First</button></div>`;
+        return;
+      }
+
+      table.innerHTML = `<div class="table-wrapper"><table>
+        <thead><tr><th>Image</th><th>Name</th><th>Description</th><th>Created</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${cats.map(c => `<tr>
+            <td><img src="${c.image}" alt="${c.name}" style="width:50px;height:50px;border-radius:50%;object-fit:cover" loading="lazy"/></td>
+            <td style="font-weight:700">${c.name}</td>
+            <td style="color:var(--text-secondary);font-size:.9rem;max-width:200px">${c.description || '—'}</td>
+            <td style="font-size:.85rem;color:var(--text-muted)">${formatDate(c.createdAt)}</td>
+            <td style="display:flex;gap:.4rem">
+              <button class="btn btn-ghost btn-sm" onclick="editCat('${c._id}','${c.name}','${c.description || ''}','${c.image || ''}')">✏️ Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteCat('${c._id}','${c.name}')">🗑️</button>
+            </td>
+          </tr>`).join('')}
+        </tbody></table></div>`;
+    }
+
+    function openModal(id, name, desc, img) {
+      editingId = id || null;
+      document.getElementById('modalTitle').textContent = id ? 'Edit Category' : 'Add Category';
+      document.getElementById('cName').value  = name || '';
+      document.getElementById('cDesc').value  = desc || '';
+      document.getElementById('cImage').value = img  || '';
+      document.getElementById('catModal').classList.remove('hidden');
+    }
+
+    function editCat(id, name, desc, img) { openModal(id, name, desc, img); }
+
+    async function saveCategory() {
+      const name = document.getElementById('cName').value.trim();
+      if (!name) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">Name is required</div>'; return; }
+
+      const body = {
+        name,
+        description: document.getElementById('cDesc').value.trim(),
+        image: document.getElementById('cImage').value.trim() || undefined,
+      };
+
+      const method   = editingId ? 'PUT' : 'POST';
+      const endpoint = editingId ? `/categories/${editingId}` : '/categories';
+      const { ok, data } = await apiCall(method, endpoint, body);
+
+      if (ok) { showToast(editingId ? 'Category updated!' : 'Category added!', 'success'); closeModal(); loadCategories(); }
+      else document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${data.message}</div>`;
+    }
+
+    async function deleteCat(id, name) {
+      if (!confirm(`Delete category "${name}"?`)) return;
+      const { ok, data } = await apiCall('DELETE', `/categories/${id}`);
+      if (ok) { showToast(`${name} deleted`, 'success'); loadCategories(); }
+      else showAlert('alertBox', data.message, 'error');
+    }
+
+    function closeModal() {
+      document.getElementById('catModal').classList.add('hidden');
+      document.getElementById('modalAlert').innerHTML = '';
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCategories);
+  </script>
+</body>
+</html>

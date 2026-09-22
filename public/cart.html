@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Cart — FoodieHub</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main style="padding-top:calc(var(--navbar-height) + 2rem)">
+    <div class="container">
+      <h1 class="page-title" style="margin-bottom:2rem">🛒 My Cart</h1>
+      <div id="alertBox" style="margin-bottom:1rem"></div>
+
+      <div id="cartContent" class="loading-overlay"><div class="spinner"></div></div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    let cartData = null;
+
+    async function loadCart() {
+      const content = document.getElementById('cartContent');
+      const { ok, data, status } = await apiCall('GET', '/cart');
+
+      if (status === 401) {
+        content.innerHTML = `<div class="empty-state">
+          <div class="icon">🔐</div>
+          <h3>Please log in</h3>
+          <p>You need to be logged in to view your cart</p>
+          <a href="/login.html?redirect=/cart.html" class="btn btn-primary">Login</a>
+        </div>`;
+        return;
+      }
+
+      if (!ok) { content.innerHTML = '<p class="text-center text-muted">Error loading cart.</p>'; return; }
+
+      cartData = data.data;
+      const items = cartData.items || [];
+
+      if (!items.length) {
+        content.innerHTML = `<div class="empty-state">
+          <div class="icon">🛒</div>
+          <h3>Your cart is empty</h3>
+          <p>Add some delicious food from our menu!</p>
+          <a href="/menu.html" class="btn btn-primary">Browse Menu</a>
+        </div>`;
+        return;
+      }
+
+      content.innerHTML = `
+        <div class="checkout-layout">
+          <div>
+            <div class="card">
+              <div class="card-header flex-between">
+                <span style="font-weight:700">${items.length} item${items.length > 1 ? 's' : ''} in cart</span>
+                <button class="btn btn-danger btn-sm" id="clearCartBtn">🗑️ Clear Cart</button>
+              </div>
+              <div class="card-body" id="cartItemsList">
+                ${items.map(item => cartItemHTML(item)).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="order-summary">
+              <h3 style="font-weight:700;margin-bottom:1.25rem">Order Summary</h3>
+              <div class="summary-row">
+                <span>Subtotal</span>
+                <span id="subtotal">${formatPrice(cartData.total || 0)}</span>
+              </div>
+              <div class="summary-row">
+                <span>Delivery</span>
+                <span style="color:var(--success)">FREE</span>
+              </div>
+              <div class="summary-row total">
+                <span>Total</span>
+                <span class="amount" id="totalAmount">${formatPrice(cartData.total || 0)}</span>
+              </div>
+              <a href="/checkout.html" class="btn btn-primary btn-full btn-lg" style="margin-top:1.25rem">
+                Proceed to Checkout →
+              </a>
+              <a href="/menu.html" class="btn btn-ghost btn-full" style="margin-top:.75rem">
+                ← Continue Shopping
+              </a>
+            </div>
+          </div>
+        </div>`;
+
+      document.getElementById('clearCartBtn').addEventListener('click', clearCart);
+    }
+
+    function cartItemHTML(item) {
+      const food = item.food || {};
+      const subtotal = item.price * item.quantity;
+      return `
+        <div class="cart-item" id="cartItem-${food._id}">
+          <img class="cart-item-img" src="${food.image || ''}" alt="${food.name}" loading="lazy" />
+          <div class="cart-item-info">
+            <div class="cart-item-name">${food.name}</div>
+            <div class="cart-item-price">₹${item.price} each</div>
+            ${!food.available ? '<div style="color:var(--danger);font-size:.8rem">⚠️ Currently unavailable</div>' : ''}
+          </div>
+          <div class="qty-control">
+            <button class="qty-btn" onclick="updateQty('${food._id}', ${item.quantity - 1})">−</button>
+            <span class="qty-val">${item.quantity}</span>
+            <button class="qty-btn" onclick="updateQty('${food._id}', ${item.quantity + 1})">+</button>
+          </div>
+          <div style="text-align:right;min-width:80px">
+            <div style="font-weight:700;color:var(--primary)">₹${subtotal}</div>
+            <button class="btn btn-danger btn-sm" style="margin-top:.4rem;padding:.3rem .6rem;font-size:.75rem" onclick="removeItem('${food._id}','${food.name}')">Remove</button>
+          </div>
+        </div>`;
+    }
+
+    async function updateQty(foodId, newQty) {
+      if (newQty < 1) {
+        const confirmRemove = confirm('Remove this item from cart?');
+        if (confirmRemove) await removeItem(foodId);
+        return;
+      }
+      const { ok, data } = await apiCall('PUT', `/cart/${foodId}`, { quantity: newQty });
+      if (ok) { cartData = data.data; loadCart(); loadCartCount(); }
+      else showToast(data.message || 'Error updating cart', 'error');
+    }
+
+    async function removeItem(foodId, name) {
+      const { ok, data } = await apiCall('DELETE', `/cart/${foodId}`);
+      if (ok) {
+        showToast(`${name || 'Item'} removed from cart`, 'info');
+        loadCart();
+        loadCartCount();
+      } else showToast(data.message || 'Error', 'error');
+    }
+
+    async function clearCart() {
+      if (!confirm('Clear your entire cart?')) return;
+      const { ok } = await apiCall('DELETE', '/cart/clear');
+      if (ok) { showToast('Cart cleared', 'info'); loadCart(); loadCartCount(); }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCart);
+  </script>
+</body>
+</html>

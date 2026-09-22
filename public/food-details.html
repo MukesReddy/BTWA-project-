@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Food Details — FoodieHub</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main style="padding-top:calc(var(--navbar-height) + 2rem)">
+    <div class="container">
+      <a href="/menu.html" style="display:inline-flex;align-items:center;gap:.4rem;color:var(--text-secondary);font-size:.9rem;margin-bottom:1.5rem">
+        ← Back to Menu
+      </a>
+      <div id="content" class="loading-overlay"><div class="spinner"></div></div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    async function loadFood() {
+      const id = new URLSearchParams(window.location.search).get('id');
+      if (!id) { window.location.href = '/menu.html'; return; }
+
+      const { ok, data } = await apiCall('GET', `/foods/${id}`);
+      const content = document.getElementById('content');
+
+      if (!ok) {
+        content.innerHTML = `<div class="empty-state"><div class="icon">❌</div><h3>Food not found</h3><a href="/menu.html" class="btn btn-primary">Back to Menu</a></div>`;
+        return;
+      }
+
+      const f = data.data;
+      document.title = `${f.name} — FoodieHub`;
+
+      content.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:start">
+          <div>
+            <img src="${f.image}" alt="${f.name}" style="width:100%;border-radius:var(--radius-xl);box-shadow:var(--shadow);max-height:450px;object-fit:cover" />
+          </div>
+          <div>
+            <div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
+              <span class="badge badge-customer">${f.category?.name || 'Food'}</span>
+              ${f.available
+                ? '<span class="badge badge-confirmed">✓ Available</span>'
+                : '<span class="badge badge-cancelled">✗ Unavailable</span>'}
+            </div>
+            <h1 style="font-size:2rem;font-weight:800;margin-bottom:.75rem">${f.name}</h1>
+            <p style="color:var(--text-secondary);font-size:1rem;line-height:1.7;margin-bottom:1.5rem">${f.description}</p>
+
+            <div style="display:flex;gap:2rem;margin-bottom:1.5rem">
+              <div>
+                <div style="font-size:.8rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Price</div>
+                <div style="font-size:2.5rem;font-weight:800;color:var(--primary)">₹${f.price}</div>
+              </div>
+              <div>
+                <div style="font-size:.8rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Rating</div>
+                <div style="font-size:2rem;font-weight:800;color:var(--accent)">⭐ ${f.rating}</div>
+              </div>
+            </div>
+
+            ${f.ingredients?.length ? `
+              <div style="margin-bottom:1.5rem">
+                <div style="font-size:.85rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">Ingredients</div>
+                <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                  ${f.ingredients.map(i => `<span style="background:var(--bg-glass);border:1px solid var(--border);border-radius:20px;padding:.2rem .6rem;font-size:.8rem;color:var(--text-secondary)">${i}</span>`).join('')}
+                </div>
+              </div>` : ''}
+
+            <!-- Quantity Selector -->
+            <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+              <label style="font-weight:600;color:var(--text-secondary)">Quantity:</label>
+              <div class="qty-control">
+                <button class="qty-btn" id="decQty">−</button>
+                <span class="qty-val" id="qtyVal">1</span>
+                <button class="qty-btn" id="incQty">+</button>
+              </div>
+            </div>
+
+            <div id="alertBox" style="margin-bottom:1rem"></div>
+
+            ${f.available
+              ? `<button class="btn btn-primary btn-lg btn-full" id="addCartBtn" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+              : `<button class="btn btn-ghost btn-lg btn-full" disabled>Currently Unavailable</button>`
+            }
+            <a href="/menu.html" class="btn btn-outline btn-full" style="margin-top:.75rem">← Continue Shopping</a>
+          </div>
+        </div>`;
+
+      // Quantity controls
+      let qty = 1;
+      document.getElementById('incQty')?.addEventListener('click', () => { qty = Math.min(10, qty+1); document.getElementById('qtyVal').textContent = qty; });
+      document.getElementById('decQty')?.addEventListener('click', () => { qty = Math.max(1, qty-1); document.getElementById('qtyVal').textContent = qty; });
+
+      window.addToCart = async (foodId, name) => {
+        const { ok, data, status } = await apiCall('POST', '/cart', { foodId, quantity: qty });
+        if (status === 401) {
+          showAlert('alertBox', 'Please <a href="/login.html">log in</a> to add items to cart', 'error');
+          return;
+        }
+        if (ok) {
+          showToast(`${qty}× ${name} added to cart! 🛒`, 'success');
+          loadCartCount();
+        } else {
+          showAlert('alertBox', data.message, 'error');
+        }
+      };
+    }
+
+    document.addEventListener('DOMContentLoaded', loadFood);
+  </script>
+</body>
+</html>

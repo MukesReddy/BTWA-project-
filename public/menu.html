@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Menu — FoodieHub</title>
+  <meta name="description" content="Browse our full menu of fresh, delicious food items with search, filter, and sort." />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main style="padding-top:calc(var(--navbar-height) + 2rem)">
+    <div class="container">
+
+      <!-- Page Header -->
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Our Menu 🍽️</h1>
+          <p class="page-subtitle">Fresh, delicious food — pick what you love</p>
+        </div>
+      </div>
+
+      <!-- Search -->
+      <div style="margin-bottom:1.5rem">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="Search for biryani, pizza, burger…" />
+        </div>
+      </div>
+
+      <!-- Category Pills -->
+      <div class="category-pills" id="categoryPills">
+        <div class="category-pill active" data-id="">All Items</div>
+      </div>
+
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <div class="filter-row">
+          <div class="filter-group">
+            <label>Min Price (₹)</label>
+            <input type="number" id="minPrice" class="form-control" placeholder="0" min="0" />
+          </div>
+          <div class="filter-group">
+            <label>Max Price (₹)</label>
+            <input type="number" id="maxPrice" class="form-control" placeholder="1000" min="0" />
+          </div>
+          <div class="filter-group">
+            <label>Sort By</label>
+            <select id="sortBy">
+              <option value="">Default</option>
+              <option value="price_asc">Price: Low to High</option>
+              <option value="price_desc">Price: High to Low</option>
+              <option value="rating">Top Rated</option>
+              <option value="newest">Newest</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Availability</label>
+            <select id="availFilter">
+              <option value="">All</option>
+              <option value="true">Available</option>
+              <option value="false">Unavailable</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:.5rem;align-items:flex-end">
+            <button class="btn btn-primary" id="applyFilters">Apply</button>
+            <button class="btn btn-ghost" id="resetFilters">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results info -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+        <p id="resultsInfo" style="color:var(--text-secondary);font-size:.9rem"></p>
+      </div>
+
+      <!-- Food Grid -->
+      <div id="foodGrid" class="loading-overlay"><div class="spinner"></div></div>
+
+      <!-- Pagination -->
+      <div id="pagination" style="display:flex;justify-content:center;gap:.5rem;margin-top:2rem"></div>
+
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    let currentPage  = 1;
+    let currentQuery = {};
+
+    // Load categories for pills
+    async function loadCategoryPills() {
+      const { ok, data } = await apiCall('GET', '/categories');
+      if (!ok) return;
+      const pills = document.getElementById('categoryPills');
+      data.data.forEach(cat => {
+        const pill = document.createElement('div');
+        pill.className = 'category-pill';
+        pill.dataset.id = cat._id;
+        pill.textContent = cat.name;
+        pills.appendChild(pill);
+      });
+
+      // Set active pill from URL
+      const urlCat = new URLSearchParams(window.location.search).get('category');
+      if (urlCat) {
+        pills.querySelectorAll('.category-pill').forEach(p => {
+          p.classList.toggle('active', p.dataset.id === urlCat);
+        });
+        currentQuery.category = urlCat;
+      }
+
+      pills.addEventListener('click', (e) => {
+        if (!e.target.classList.contains('category-pill')) return;
+        pills.querySelectorAll('.category-pill').forEach(p => p.classList.remove('active'));
+        e.target.classList.add('active');
+        currentQuery.category = e.target.dataset.id || undefined;
+        currentPage = 1;
+        loadFoods();
+      });
+    }
+
+    // Load foods
+    async function loadFoods() {
+      const grid = document.getElementById('foodGrid');
+      grid.innerHTML = '<div class="loading-overlay"><div class="spinner"></div></div>';
+
+      const params = new URLSearchParams();
+      if (currentQuery.search)    params.set('search', currentQuery.search);
+      if (currentQuery.category)  params.set('category', currentQuery.category);
+      if (currentQuery.minPrice)  params.set('minPrice', currentQuery.minPrice);
+      if (currentQuery.maxPrice)  params.set('maxPrice', currentQuery.maxPrice);
+      if (currentQuery.sort)      params.set('sort', currentQuery.sort);
+      if (currentQuery.available !== undefined) params.set('available', currentQuery.available);
+      params.set('page', currentPage);
+      params.set('limit', 9);
+
+      const { ok, data } = await apiCall('GET', `/foods?${params}`);
+      if (!ok) { grid.innerHTML = '<p class="text-center text-muted">Error loading menu.</p>'; return; }
+
+      const { foods, pagination } = data.data;
+      document.getElementById('resultsInfo').textContent =
+        `Showing ${foods.length} of ${pagination.total} items`;
+
+      if (!foods.length) {
+        grid.innerHTML = `<div class="empty-state">
+          <div class="icon">🍽️</div>
+          <h3>No food items found</h3>
+          <p>Try adjusting your search or filters</p>
+          <button class="btn btn-outline" onclick="resetAll()">Clear Filters</button>
+        </div>`;
+        return;
+      }
+
+      grid.innerHTML = `<div class="food-grid">${foods.map(foodCard).join('')}</div>`;
+      renderPagination(pagination);
+    }
+
+    function foodCard(f) {
+      return `
+        <div class="food-card">
+          <div class="food-card-img-wrapper">
+            <a href="/food-details.html?id=${f._id}">
+              <img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" />
+            </a>
+            <span class="food-card-badge">${f.category?.name || 'Food'}</span>
+            ${!f.available ? '<span class="unavailable-badge">Unavailable</span>' : ''}
+          </div>
+          <div class="food-card-body">
+            <div class="food-card-category">${f.category?.name || ''}</div>
+            <a href="/food-details.html?id=${f._id}"><h3 class="food-card-name">${f.name}</h3></a>
+            <p class="food-card-desc">${f.description}</p>
+            <div class="food-card-footer">
+              <span class="food-price">₹${f.price}</span>
+              <span class="food-rating">⭐ ${f.rating}</span>
+            </div>
+            <div style="margin-top:.75rem">
+              ${f.available
+                ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+                : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
+              }
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function renderPagination(pg) {
+      const container = document.getElementById('pagination');
+      if (pg.totalPages <= 1) { container.innerHTML = ''; return; }
+      let html = '';
+      for (let i = 1; i <= pg.totalPages; i++) {
+        html += `<button class="btn ${i === pg.page ? 'btn-primary' : 'btn-ghost'} btn-sm"
+          onclick="changePage(${i})">${i}</button>`;
+      }
+      container.innerHTML = html;
+    }
+
+    function changePage(p) { currentPage = p; loadFoods(); window.scrollTo({top:0,behavior:'smooth'}); }
+
+    async function addToCart(foodId, name) {
+      const { ok, data, status } = await apiCall('POST', '/cart', { foodId, quantity: 1 });
+      if (status === 401) {
+        showToast('Please log in to add items to cart', 'warning');
+        setTimeout(() => window.location.href = '/login.html?redirect=/menu.html', 800);
+        return;
+      }
+      if (ok) {
+        showToast(`${name} added to cart! 🛒`, 'success');
+        loadCartCount();
+      } else {
+        showToast(data.message || 'Error', 'error');
+      }
+    }
+
+    function resetAll() {
+      currentQuery = {};
+      currentPage = 1;
+      document.getElementById('searchInput').value = '';
+      document.getElementById('minPrice').value = '';
+      document.getElementById('maxPrice').value = '';
+      document.getElementById('sortBy').value = '';
+      document.getElementById('availFilter').value = '';
+      document.querySelectorAll('.category-pill').forEach(p => p.classList.remove('active'));
+      document.querySelector('.category-pill[data-id=""]').classList.add('active');
+      loadFoods();
+    }
+
+    // Search with debounce
+    let searchTimer;
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        currentQuery.search = e.target.value.trim() || undefined;
+        currentPage = 1;
+        loadFoods();
+      }, 400);
+    });
+
+    // Apply filters
+    document.getElementById('applyFilters').addEventListener('click', () => {
+      currentQuery.minPrice  = document.getElementById('minPrice').value || undefined;
+      currentQuery.maxPrice  = document.getElementById('maxPrice').value || undefined;
+      currentQuery.sort      = document.getElementById('sortBy').value || undefined;
+      const av = document.getElementById('availFilter').value;
+      currentQuery.available = av !== '' ? av : undefined;
+      currentPage = 1;
+      loadFoods();
+    });
+
+    // Reset filters
+    document.getElementById('resetFilters').addEventListener('click', resetAll);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadCategoryPills();
+      loadFoods();
+    });
+  </script>
+</body>
+</html>

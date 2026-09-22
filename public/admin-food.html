@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manage Foods — FoodieHub Admin</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div class="admin-layout">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Overview</div>
+        <a href="/admin.html" class="sidebar-link"><span class="icon">📊</span> Dashboard</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Manage</div>
+        <a href="/admin-food.html" class="sidebar-link active"><span class="icon">🍔</span> Foods</a>
+        <a href="/admin-categories.html" class="sidebar-link"><span class="icon">📂</span> Categories</a>
+        <a href="/admin-orders.html" class="sidebar-link"><span class="icon">📋</span> Orders</a>
+        <a href="/admin-users.html" class="sidebar-link"><span class="icon">👥</span> Users</a>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">🍔 Manage Foods</h1>
+          <p class="page-subtitle">Add, edit, or remove food items</p>
+        </div>
+        <button class="btn btn-primary" onclick="openAddModal()">+ Add Food</button>
+      </div>
+
+      <div id="alertBox" style="margin-bottom:1rem"></div>
+      <div id="foodTable" class="loading-overlay"><div class="spinner"></div></div>
+    </main>
+  </div>
+
+  <!-- Food Modal -->
+  <div id="foodModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modalTitle">Add Food</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="modalAlert" style="margin-bottom:1rem"></div>
+        <form id="foodForm">
+          <div class="form-group">
+            <label class="form-label">Food Name *</label>
+            <input type="text" id="fName" class="form-control" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea id="fDesc" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Price (₹) *</label>
+              <input type="number" id="fPrice" class="form-control" min="0" step="0.01" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rating (0–5)</label>
+              <input type="number" id="fRating" class="form-control" min="0" max="5" step="0.1" value="4.0" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Category *</label>
+            <select id="fCategory" class="form-control" required>
+              <option value="">Select category…</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Image URL</label>
+            <input type="url" id="fImage" class="form-control" placeholder="https://…" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Ingredients (comma-separated)</label>
+            <input type="text" id="fIngredients" class="form-control" placeholder="Chicken, Rice, Spices" />
+          </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+              <input type="checkbox" id="fAvailable" checked />
+              <span class="form-label" style="margin:0">Available for ordering</span>
+            </label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="saveFoodBtn" onclick="saveFood()">Save Food</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/main.js"></script>
+  <script>
+    let editingFoodId = null;
+    let categories = [];
+
+    async function guardAdmin() {
+      const user = await fetchCurrentUser();
+      if (!user || user.role !== 'admin') { window.location.href = '/login.html'; return false; }
+      return true;
+    }
+
+    async function loadCategories() {
+      const { ok, data } = await apiCall('GET', '/categories');
+      if (ok) categories = data.data;
+    }
+
+    async function loadFoods() {
+      if (!await guardAdmin()) return;
+      await loadCategories();
+
+      const { ok, data } = await apiCall('GET', '/foods?limit=50');
+      const table = document.getElementById('foodTable');
+      if (!ok) { table.innerHTML = '<p class="text-muted text-center">Error loading foods.</p>'; return; }
+
+      const foods = data.data.foods;
+      if (!foods.length) { table.innerHTML = `<div class="empty-state"><div class="icon">🍔</div><h3>No food items</h3><button class="btn btn-primary" onclick="openAddModal()">Add First Food</button></div>`; return; }
+
+      table.innerHTML = `
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Image</th><th>Name</th><th>Category</th><th>Price</th><th>Rating</th><th>Available</th><th>Actions</th></tr></thead>
+            <tbody>
+              ${foods.map(f => `
+                <tr>
+                  <td><img src="${f.image}" alt="${f.name}" style="width:50px;height:50px;border-radius:var(--radius);object-fit:cover" loading="lazy"/></td>
+                  <td style="font-weight:600;max-width:150px">${f.name}</td>
+                  <td>${f.category?.name || 'N/A'}</td>
+                  <td style="color:var(--primary);font-weight:700">₹${f.price}</td>
+                  <td>⭐ ${f.rating}</td>
+                  <td>${f.available
+                    ? '<span class="badge badge-confirmed">✓ Yes</span>'
+                    : '<span class="badge badge-cancelled">✗ No</span>'}</td>
+                  <td style="display:flex;gap:.4rem">
+                    <button class="btn btn-ghost btn-sm" onclick="editFood('${f._id}')">✏️ Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteFood('${f._id}','${f.name}')">🗑️</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    function openAddModal() {
+      editingFoodId = null;
+      document.getElementById('modalTitle').textContent = 'Add New Food';
+      document.getElementById('foodForm').reset();
+      document.getElementById('fAvailable').checked = true;
+      document.getElementById('fRating').value = '4.0';
+      populateCategorySelect();
+      document.getElementById('foodModal').classList.remove('hidden');
+    }
+
+    async function editFood(id) {
+      editingFoodId = id;
+      document.getElementById('modalTitle').textContent = 'Edit Food';
+      document.getElementById('foodModal').classList.remove('hidden');
+      const { ok, data } = await apiCall('GET', `/foods/${id}`);
+      if (!ok) return;
+      const f = data.data;
+      document.getElementById('fName').value        = f.name;
+      document.getElementById('fDesc').value        = f.description;
+      document.getElementById('fPrice').value       = f.price;
+      document.getElementById('fRating').value      = f.rating;
+      document.getElementById('fImage').value       = f.image;
+      document.getElementById('fIngredients').value = f.ingredients?.join(', ') || '';
+      document.getElementById('fAvailable').checked = f.available;
+      populateCategorySelect(f.category?._id || f.category);
+    }
+
+    function populateCategorySelect(selectedId = '') {
+      const sel = document.getElementById('fCategory');
+      sel.innerHTML = '<option value="">Select category…</option>' +
+        categories.map(c => `<option value="${c._id}" ${c._id === selectedId ? 'selected' : ''}>${c.name}</option>`).join('');
+    }
+
+    async function saveFood() {
+      const name       = document.getElementById('fName').value.trim();
+      const price      = document.getElementById('fPrice').value;
+      const category   = document.getElementById('fCategory').value;
+
+      if (!name || !price || !category) {
+        document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">Please fill name, price, and category</div>';
+        return;
+      }
+
+      const body = {
+        name, price: Number(price), category,
+        description: document.getElementById('fDesc').value.trim(),
+        rating: Number(document.getElementById('fRating').value) || 4.0,
+        image: document.getElementById('fImage').value.trim() || undefined,
+        ingredients: document.getElementById('fIngredients').value.split(',').map(s=>s.trim()).filter(Boolean),
+        available: document.getElementById('fAvailable').checked,
+      };
+
+      const btn = document.getElementById('saveFoodBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+
+      const method   = editingFoodId ? 'PUT' : 'POST';
+      const endpoint = editingFoodId ? `/foods/${editingFoodId}` : '/foods';
+      const { ok, data } = await apiCall(method, endpoint, body);
+
+      btn.disabled = false; btn.textContent = 'Save Food';
+
+      if (ok) {
+        showToast(editingFoodId ? 'Food updated!' : 'Food added!', 'success');
+        closeModal();
+        loadFoods();
+      } else {
+        document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${data.message}</div>`;
+      }
+    }
+
+    async function deleteFood(id, name) {
+      if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+      const { ok, data } = await apiCall('DELETE', `/foods/${id}`);
+      if (ok) { showToast(`${name} deleted`, 'success'); loadFoods(); }
+      else showAlert('alertBox', data.message, 'error');
+    }
+
+    function closeModal() {
+      document.getElementById('foodModal').classList.add('hidden');
+      document.getElementById('modalAlert').innerHTML = '';
+    }
+
+    document.getElementById('foodModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeModal();
+    });
+
+    document.addEventListener('DOMContentLoaded', loadFoods);
+  </script>
+</body>
+</html>

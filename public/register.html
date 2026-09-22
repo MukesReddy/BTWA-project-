@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register — FoodieHub</title>
+  <meta name="description" content="Create your FoodieHub account and start ordering food today." />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main>
+    <div class="auth-page">
+      <div class="auth-card" style="max-width:500px">
+        <div class="auth-logo">
+          <div class="logo-name">🍔 Foodie<span>Hub</span></div>
+        </div>
+
+        <h1 class="auth-title">Create Account</h1>
+        <p class="auth-subtitle">Join FoodieHub and enjoy great food</p>
+
+        <div id="alertBox"></div>
+
+        <form id="registerForm" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="name">Full Name</label>
+            <input type="text" id="name" class="form-control" placeholder="Rahul Sharma" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="email">Email Address</label>
+            <input type="email" id="email" class="form-control" placeholder="you@example.com" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="phone">Phone Number <span style="color:var(--text-muted)">(optional)</span></label>
+            <input type="tel" id="phone" class="form-control" placeholder="9876543210" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="password">Password</label>
+            <input type="password" id="password" class="form-control" placeholder="Min 6 characters" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="confirmPwd">Confirm Password</label>
+            <input type="password" id="confirmPwd" class="form-control" placeholder="Repeat password" required />
+          </div>
+
+          <details style="margin-bottom:1rem">
+            <summary style="cursor:pointer;color:var(--text-secondary);font-size:.9rem;font-weight:500;margin-bottom:.75rem">📍 Add Delivery Address (optional)</summary>
+            <div class="form-group">
+              <input type="text" id="street" class="form-control" placeholder="Street / Flat Number" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <input type="text" id="city" class="form-control" placeholder="City" />
+              </div>
+              <div class="form-group">
+                <input type="text" id="state" class="form-control" placeholder="State" />
+              </div>
+            </div>
+            <div class="form-group">
+              <input type="text" id="pincode" class="form-control" placeholder="Pincode" />
+            </div>
+          </details>
+
+          <button type="submit" class="btn btn-primary btn-full btn-lg" id="registerBtn">
+            Create Account
+          </button>
+        </form>
+
+        <div class="auth-link-row">
+          Already have an account? <a href="/login.html">Sign in →</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    document.getElementById('registerForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearAlert('alertBox');
+
+      const name       = document.getElementById('name').value.trim();
+      const email      = document.getElementById('email').value.trim();
+      const phone      = document.getElementById('phone').value.trim();
+      const password   = document.getElementById('password').value;
+      const confirmPwd = document.getElementById('confirmPwd').value;
+      const street     = document.getElementById('street').value.trim();
+      const city       = document.getElementById('city').value.trim();
+      const state      = document.getElementById('state').value.trim();
+      const pincode    = document.getElementById('pincode').value.trim();
+
+      // Frontend validation
+      if (!name || !email || !password) {
+        showAlert('alertBox', 'Name, email, and password are required', 'error');
+        return;
+      }
+      if (password.length < 6) {
+        showAlert('alertBox', 'Password must be at least 6 characters', 'error');
+        return;
+      }
+      if (password !== confirmPwd) {
+        showAlert('alertBox', 'Passwords do not match', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('registerBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Creating account…';
+
+      const body = {
+        name, email, password,
+        phone: phone || undefined,
+        address: (street || city || state || pincode)
+          ? { street, city, state, pincode }
+          : undefined,
+      };
+
+      const { ok, data } = await apiCall('POST', '/auth/register', body);
+
+      if (ok) {
+        showAlert('alertBox', '✅ Account created! Redirecting to login…', 'success');
+        setTimeout(() => window.location.href = '/login.html', 1500);
+      } else {
+        showAlert('alertBox', data.message || 'Registration failed', 'error');
+        btn.disabled = false;
+        btn.innerHTML = 'Create Account';
+      }
+    });
+  </script>
+</body>
+</html>

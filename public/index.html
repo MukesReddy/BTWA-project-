@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FoodieHub — Order Delicious Food Online</title>
+  <meta name="description" content="FoodieHub: Order delicious biryani, burgers, pizzas and more. Fast delivery, fresh food, great prices." />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <!-- Navbar (rendered by JS) -->
+  <nav class="navbar" id="navbar"></nav>
+
+  <main>
+    <!-- ── Hero Section ───────────────────────────────── -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-layout">
+          <div class="hero-content">
+            <div class="hero-tag">🚀 Fast Delivery in 30 mins</div>
+            <h1 class="hero-title">
+              Craving Something<br />
+              <span class="highlight">Delicious?</span>
+            </h1>
+            <p class="hero-desc">
+              Order from our wide selection of freshly prepared meals — Biryani, Burgers, Pizza, and much more. Delivered hot to your door.
+            </p>
+            <div class="hero-actions">
+              <a href="/menu.html" class="btn btn-primary btn-lg" id="exploreMenuBtn">🍽️ Explore Menu</a>
+              <a href="/register.html" class="btn btn-outline btn-lg" id="signUpBtn">Sign Up Free</a>
+            </div>
+            <div class="stats-row">
+              <div class="stat-item">
+                <div class="stat-number" id="statFoods">18+</div>
+                <div class="stat-label">Menu Items</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-number">7</div>
+                <div class="stat-label">Categories</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-number">⭐ 4.7</div>
+                <div class="stat-label">Avg Rating</div>
+              </div>
+            </div>
+          </div>
+          <div class="hero-image">
+            <img src="https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=600" alt="Delicious food spread" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Categories Section ─────────────────────────── -->
+    <section class="section" style="padding-top:2rem">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-tag">Browse by Type</div>
+          <h2 class="section-title">Popular <span class="highlight">Categories</span></h2>
+          <p class="section-desc">Pick your favorite cuisine and explore our handcrafted dishes</p>
+        </div>
+        <div id="categoriesGrid" class="loading-overlay">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Featured Foods Section ─────────────────────── -->
+    <section class="section" style="background:var(--bg-card);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-tag">Most Loved</div>
+          <h2 class="section-title">Featured <span class="highlight">Dishes</span></h2>
+          <p class="section-desc">Our bestsellers, crafted with the finest ingredients</p>
+        </div>
+        <div id="featuredFoods" class="loading-overlay">
+          <div class="spinner"></div>
+        </div>
+        <div class="text-center mt-3">
+          <a href="/menu.html" class="btn btn-outline btn-lg">View Full Menu →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Why FoodieHub ──────────────────────────────── -->
+    <section class="section">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-tag">Why Us</div>
+          <h2 class="section-title">Why Choose <span class="highlight">FoodieHub?</span></h2>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1.5rem">
+          <div class="card card-body" style="text-align:center">
+            <div style="font-size:2.5rem;margin-bottom:1rem">⚡</div>
+            <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:.5rem">Lightning Fast</h3>
+            <p style="color:var(--text-secondary);font-size:.9rem">Order placed in seconds, delivered in 30 minutes</p>
+          </div>
+          <div class="card card-body" style="text-align:center">
+            <div style="font-size:2.5rem;margin-bottom:1rem">🍳</div>
+            <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:.5rem">Fresh Ingredients</h3>
+            <p style="color:var(--text-secondary);font-size:.9rem">Every meal prepared fresh with quality ingredients daily</p>
+          </div>
+          <div class="card card-body" style="text-align:center">
+            <div style="font-size:2.5rem;margin-bottom:1rem">💳</div>
+            <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:.5rem">Easy Payment</h3>
+            <p style="color:var(--text-secondary);font-size:.9rem">Pay on delivery — no card details needed upfront</p>
+          </div>
+          <div class="card card-body" style="text-align:center">
+            <div style="font-size:2.5rem;margin-bottom:1rem">📍</div>
+            <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:.5rem">Real-time Tracking</h3>
+            <p style="color:var(--text-secondary);font-size:.9rem">Track your order status from placement to doorstep</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="brand-name">🍔 Foodie<span>Hub</span></div>
+          <p class="footer-desc">Your favourite food, delivered fast. Enjoy restaurant-quality meals from the comfort of your home.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Quick Links</h4>
+          <ul>
+            <li><a href="/index.html">Home</a></li>
+            <li><a href="/menu.html">Menu</a></li>
+            <li><a href="/cart.html">Cart</a></li>
+            <li><a href="/orders.html">My Orders</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Account</h4>
+          <ul>
+            <li><a href="/login.html">Login</a></li>
+            <li><a href="/register.html">Register</a></li>
+            <li><a href="/profile.html">Profile</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">© 2024 FoodieHub. Built for BTWA Course.</div>
+    </div>
+  </footer>
+
+  <script src="/js/main.js"></script>
+  <script>
+    // Load categories
+    async function loadCategories() {
+      const { ok, data } = await apiCall('GET', '/categories');
+      const container = document.getElementById('categoriesGrid');
+      if (!ok || !data.data?.length) {
+        container.innerHTML = '<p class="text-center text-muted">No categories found.</p>';
+        return;
+      }
+      const cats = data.data.slice(0, 6);
+      container.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem">
+        ${cats.map(c => `
+          <a href="/menu.html?category=${c._id}" style="display:flex;flex-direction:column;align-items:center;gap:.75rem;
+            padding:1.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);
+            transition:var(--transition);text-decoration:none;color:var(--text-primary)"
+            onmouseover="this.style.borderColor='var(--primary)';this.style.transform='translateY(-4px)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.transform='translateY(0)'">
+            <img src="${c.image}" alt="${c.name}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--border)" loading="lazy"/>
+            <span style="font-weight:600;font-size:.95rem">${c.name}</span>
+          </a>
+        `).join('')}
+      </div>`;
+    }
+
+    // Load featured foods (top rated)
+    async function loadFeaturedFoods() {
+      const { ok, data } = await apiCall('GET', '/foods?sort=rating&limit=4&available=true');
+      const container = document.getElementById('featuredFoods');
+      if (!ok || !data.data?.foods?.length) {
+        container.innerHTML = '<p class="text-center text-muted">No food items found.</p>';
+        return;
+      }
+      container.innerHTML = `<div class="food-grid">
+        ${data.data.foods.map(f => foodCard(f)).join('')}
+      </div>`;
+    }
+
+    function foodCard(f) {
+      return `
+        <div class="food-card">
+          <div class="food-card-img-wrapper">
+            <img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" />
+            <span class="food-card-badge">${f.category?.name || 'Food'}</span>
+            ${!f.available ? '<span class="unavailable-badge">Unavailable</span>' : ''}
+          </div>
+          <div class="food-card-body">
+            <div class="food-card-category">${f.category?.name || ''}</div>
+            <h3 class="food-card-name">${f.name}</h3>
+            <p class="food-card-desc">${f.description}</p>
+            <div class="food-card-footer">
+              <span class="food-price">₹${f.price}</span>
+              <span class="food-rating">⭐ ${f.rating}</span>
+            </div>
+            <div style="margin-top:.75rem">
+              ${f.available
+                ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+                : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
+              }
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function addToCart(foodId, name) {
+      const { ok, data, status } = await apiCall('POST', '/cart', { foodId, quantity: 1 });
+      if (status === 401) {
+        showToast('Please log in to add items to cart', 'warning');
+        setTimeout(() => window.location.href = '/login.html', 1000);
+        return;
+      }
+      if (ok) {
+        showToast(`${name} added to cart! 🛒`, 'success');
+        loadCartCount();
+      } else {
+        showToast(data.message || 'Error adding to cart', 'error');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadCategories();
+      loadFeaturedFoods();
+    });
+  </script>
+</body>
+</html>

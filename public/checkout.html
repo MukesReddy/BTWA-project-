@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checkout — FoodieHub</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main style="padding-top:calc(var(--navbar-height) + 2rem)">
+    <div class="container">
+      <h1 class="page-title" style="margin-bottom:2rem">🧾 Checkout</h1>
+      <div id="alertBox" style="margin-bottom:1rem"></div>
+
+      <div id="checkoutContent" class="loading-overlay"><div class="spinner"></div></div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    let cartTotal = 0;
+
+    async function loadCheckout() {
+      const content = document.getElementById('checkoutContent');
+
+      // Must be logged in
+      const user = await fetchCurrentUser();
+      if (!user) {
+        window.location.href = '/login.html?redirect=/checkout.html';
+        return;
+      }
+
+      // Load cart
+      const { ok, data, status } = await apiCall('GET', '/cart');
+      if (!ok || !data.data?.items?.length) {
+        content.innerHTML = `<div class="empty-state">
+          <div class="icon">🛒</div>
+          <h3>Your cart is empty</h3>
+          <p>Add items to your cart before checking out</p>
+          <a href="/menu.html" class="btn btn-primary">Browse Menu</a>
+        </div>`;
+        return;
+      }
+
+      const cart = data.data;
+      cartTotal  = cart.total;
+      const addr = user.address || {};
+
+      content.innerHTML = `
+        <div class="checkout-layout">
+          <!-- Delivery + Payment Form -->
+          <div>
+            <div class="card" style="margin-bottom:1.5rem">
+              <div class="card-header"><h3 style="font-weight:700">📍 Delivery Address</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label class="form-label">Street / Flat Number *</label>
+                  <input type="text" id="street" class="form-control" value="${addr.street || ''}" placeholder="123 Main Street, Flat 4B" required />
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label">City *</label>
+                    <input type="text" id="city" class="form-control" value="${addr.city || ''}" placeholder="Mumbai" required />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">State *</label>
+                    <input type="text" id="state" class="form-control" value="${addr.state || ''}" placeholder="Maharashtra" required />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Pincode *</label>
+                  <input type="text" id="pincode" class="form-control" value="${addr.pincode || ''}" placeholder="400001" required />
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3 style="font-weight:700">💳 Payment Method</h3></div>
+              <div class="card-body">
+                <label style="display:flex;align-items:center;gap:.75rem;padding:1rem;border:2px solid var(--primary);border-radius:var(--radius);cursor:pointer;background:rgba(255,107,53,0.06)">
+                  <input type="radio" name="payment" value="Cash on Delivery" checked />
+                  <div>
+                    <div style="font-weight:700">💵 Cash on Delivery</div>
+                    <div style="font-size:.85rem;color:var(--text-secondary)">Pay when your order arrives</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Order Summary -->
+          <div>
+            <div class="order-summary">
+              <h3 style="font-weight:700;margin-bottom:1.25rem">Your Order</h3>
+
+              <div style="margin-bottom:1rem">
+                ${cart.items.map(item => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;font-size:.9rem;border-bottom:1px solid var(--border)">
+                    <span>${item.food?.name || 'Item'} × ${item.quantity}</span>
+                    <span style="font-weight:600">₹${item.price * item.quantity}</span>
+                  </div>
+                `).join('')}
+              </div>
+
+              <div class="summary-row">
+                <span>Subtotal</span>
+                <span>${formatPrice(cartTotal)}</span>
+              </div>
+              <div class="summary-row">
+                <span>Delivery</span>
+                <span style="color:var(--success)">FREE</span>
+              </div>
+              <div class="summary-row total">
+                <span>Total</span>
+                <span class="amount">${formatPrice(cartTotal)}</span>
+              </div>
+
+              <button class="btn btn-primary btn-full btn-lg" style="margin-top:1.25rem" id="placeOrderBtn">
+                ✅ Place Order
+              </button>
+              <a href="/cart.html" class="btn btn-ghost btn-full" style="margin-top:.75rem">← Back to Cart</a>
+
+              <p style="font-size:.8rem;color:var(--text-muted);text-align:center;margin-top:.75rem">
+                🔒 Server-side price verification ensures accuracy
+              </p>
+            </div>
+          </div>
+        </div>`;
+
+      document.getElementById('placeOrderBtn').addEventListener('click', placeOrder);
+    }
+
+    async function placeOrder() {
+      clearAlert('alertBox');
+      const street  = document.getElementById('street').value.trim();
+      const city    = document.getElementById('city').value.trim();
+      const state   = document.getElementById('state').value.trim();
+      const pincode = document.getElementById('pincode').value.trim();
+
+      if (!street || !city || !state || !pincode) {
+        showAlert('alertBox', 'Please fill in all delivery address fields', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('placeOrderBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Placing order…';
+
+      const { ok, data } = await apiCall('POST', '/orders', {
+        deliveryAddress: { street, city, state, pincode },
+        paymentMethod: 'Cash on Delivery',
+      });
+
+      if (ok) {
+        const orderId = data.data.order._id;
+        showToast('🎉 Order placed successfully!', 'success');
+        setTimeout(() => window.location.href = `/orders.html`, 1000);
+      } else {
+        showAlert('alertBox', data.message || 'Failed to place order', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '✅ Place Order';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCheckout);
+  </script>
+</body>
+</html>

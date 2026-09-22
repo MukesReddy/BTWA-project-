@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — FoodieHub</title>
+  <meta name="description" content="Login to your FoodieHub account to order food." />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <main>
+    <div class="auth-page">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <div class="logo-name">🍔 Foodie<span>Hub</span></div>
+        </div>
+
+        <h1 class="auth-title">Welcome Back!</h1>
+        <p class="auth-subtitle">Sign in to continue ordering</p>
+
+        <div id="alertBox"></div>
+
+        <form id="loginForm" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="email">Email Address</label>
+            <input type="email" id="email" class="form-control" placeholder="you@example.com" required autocomplete="email" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="password">Password</label>
+            <div style="position:relative">
+              <input type="password" id="password" class="form-control" placeholder="••••••••" required autocomplete="current-password" />
+              <button type="button" id="togglePwd" style="position:absolute;right:.75rem;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1rem">👁️</button>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-full btn-lg" id="loginBtn">
+            Sign In
+          </button>
+        </form>
+
+        <div class="auth-divider">— or sign in as —</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+          <button class="btn btn-ghost" onclick="quickLogin('admin@foodiehub.com','admin123')">⚙️ Admin Demo</button>
+          <button class="btn btn-ghost" onclick="quickLogin('rahul@example.com','password123')">👤 Customer Demo</button>
+        </div>
+
+        <div class="auth-link-row">
+          Don't have an account? <a href="/register.html">Sign up →</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script>
+    // Toggle password visibility
+    document.getElementById('togglePwd').addEventListener('click', function() {
+      const pwd = document.getElementById('password');
+      pwd.type = pwd.type === 'password' ? 'text' : 'password';
+      this.textContent = pwd.type === 'password' ? '👁️' : '🙈';
+    });
+
+    // Login form submit
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearAlert('alertBox');
+
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        showAlert('alertBox', 'Please fill in all fields', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Signing in…';
+
+      const { ok, data } = await apiCall('POST', '/auth/login', { email, password });
+
+      if (ok) {
+        showToast(`Welcome back! 🎉`, 'success');
+        const redirect = new URLSearchParams(window.location.search).get('redirect') || '/menu.html';
+        setTimeout(() => window.location.href = redirect, 700);
+      } else {
+        showAlert('alertBox', data.message || 'Login failed', 'error');
+        btn.disabled = false;
+        btn.innerHTML = 'Sign In';
+      }
+    });
+
+    function quickLogin(email, pwd) {
+      document.getElementById('email').value = email;
+      document.getElementById('password').value = pwd;
+      document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard — FoodieHub</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <nav class="navbar" id="navbar"></nav>
+
+  <div class="admin-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Overview</div>
+        <a href="/admin.html" class="sidebar-link active"><span class="icon">📊</span> Dashboard</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Manage</div>
+        <a href="/admin-food.html" class="sidebar-link"><span class="icon">🍔</span> Foods</a>
+        <a href="/admin-categories.html" class="sidebar-link"><span class="icon">📂</span> Categories</a>
+        <a href="/admin-orders.html" class="sidebar-link"><span class="icon">📋</span> Orders</a>
+        <a href="/admin-users.html" class="sidebar-link"><span class="icon">👥</span> Users</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Export</div>
+        <a href="/api/admin/export/orders" class="sidebar-link" target="_blank"><span class="icon">📥</span> Export Orders CSV</a>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="admin-main">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <p class="page-subtitle">Real-time overview from MongoDB aggregation</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadDashboard()">🔄 Refresh</button>
+      </div>
+
+      <!-- Stat Cards -->
+      <div id="statCards" class="stat-cards">
+        <div class="stat-card"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        <div class="stat-card"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        <div class="stat-card"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        <div class="stat-card"><div class="loading-overlay"><div class="spinner"></div></div></div>
+      </div>
+
+      <!-- Charts Row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
+        <div class="card">
+          <div class="card-header"><h3 style="font-size:1rem;font-weight:700">📊 Orders by Status</h3></div>
+          <div class="card-body" id="ordersByStatus"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 style="font-size:1rem;font-weight:700">🔥 Popular Foods</h3></div>
+          <div class="card-body" id="popularFoods"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        </div>
+      </div>
+
+      <!-- Recent Orders -->
+      <div class="card">
+        <div class="card-header flex-between">
+          <h3 style="font-size:1rem;font-weight:700">🕐 Recent Orders</h3>
+          <a href="/admin-orders.html" class="btn btn-ghost btn-sm">View All →</a>
+        </div>
+        <div id="recentOrders"><div class="loading-overlay"><div class="spinner"></div></div></div>
+      </div>
+
+      <!-- Top Spenders (from $lookup + $project aggregation pipeline) -->
+      <div class="card" style="margin-bottom:1.5rem">
+        <div class="card-header">
+          <h3 style="font-size:1rem;font-weight:700">💳 Top Spenders <span style="font-size:.75rem;font-weight:400;color:var(--text-muted)">— MongoDB $lookup + $project pipeline</span></h3>
+        </div>
+        <div class="card-body" id="topSpenders"><div class="loading-overlay"><div class="spinner"></div></div></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/js/main.js"></script>
+  <script>
+    async function guardAdmin() {
+      const user = await fetchCurrentUser();
+      if (!user) { window.location.href = '/login.html'; return false; }
+      if (user.role !== 'admin') { window.location.href = '/index.html'; return false; }
+      return true;
+    }
+
+    async function loadDashboard() {
+      if (!await guardAdmin()) return;
+
+      const { ok, data } = await apiCall('GET', '/admin/dashboard');
+      if (!ok) { document.getElementById('statCards').innerHTML = '<p class="text-muted">Error loading dashboard.</p>'; return; }
+
+      const { summary, ordersByStatus, popularFoods, topSpenders, recentOrders } = data.data;
+
+      // Stat Cards
+      document.getElementById('statCards').innerHTML = `
+        <div class="stat-card orange">
+          <div class="stat-card-icon">📋</div>
+          <div class="stat-card-value">${summary.totalOrders}</div>
+          <div class="stat-card-label">Total Orders</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-card-icon">💰</div>
+          <div class="stat-card-value">₹${summary.totalRevenue.toLocaleString()}</div>
+          <div class="stat-card-label">Total Revenue</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-card-icon">👥</div>
+          <div class="stat-card-value">${summary.totalUsers}</div>
+          <div class="stat-card-label">Total Users</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="stat-card-icon">⏳</div>
+          <div class="stat-card-value">${summary.pendingOrders}</div>
+          <div class="stat-card-label">Pending Orders</div>
+        </div>`;
+
+      // Orders by Status (simple bar chart)
+      const maxCount = Math.max(...ordersByStatus.map(s => s.count), 1);
+      document.getElementById('ordersByStatus').innerHTML = ordersByStatus.length
+        ? `<div style="display:flex;flex-direction:column;gap:.75rem">
+          ${ordersByStatus.map(s => `
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:.3rem">
+                <span>${s._id}</span><span style="font-weight:700">${s.count}</span>
+              </div>
+              <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">
+                <div style="background:var(--primary);width:${(s.count/maxCount)*100}%;height:100%;border-radius:4px;transition:width 1s ease"></div>
+              </div>
+            </div>`).join('')}
+          </div>`
+        : '<p class="text-muted text-center">No orders yet</p>';
+
+      // Popular Foods
+      document.getElementById('popularFoods').innerHTML = popularFoods.length
+        ? `<div style="display:flex;flex-direction:column;gap:.5rem">
+          ${popularFoods.map((f, i) => `
+            <div style="display:flex;align-items:center;gap:.75rem;padding:.5rem;border-radius:var(--radius);background:var(--bg-glass)">
+              <span style="width:24px;height:24px;background:var(--primary);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:white;flex-shrink:0">${i+1}</span>
+              <div style="flex:1">
+                <div style="font-size:.9rem;font-weight:600">${f.foodName}</div>
+                <div style="font-size:.75rem;color:var(--text-muted)">${f.totalOrdered} ordered · ₹${f.totalRevenue} revenue</div>
+              </div>
+            </div>`).join('')}
+          </div>`
+        : '<p class="text-muted text-center">No orders yet</p>';
+
+      // Recent Orders Table
+      document.getElementById('recentOrders').innerHTML = recentOrders.length
+        ? `<div class="table-wrapper"><table>
+          <thead><tr><th>Order ID</th><th>Customer</th><th>Amount</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+          <tbody>
+            ${recentOrders.map(o => `
+              <tr>
+                <td style="font-family:monospace;font-size:.85rem">#${o._id.slice(-8).toUpperCase()}</td>
+                <td>${o.user?.name || 'N/A'}</td>
+                <td style="font-weight:700;color:var(--primary)">${formatPrice(o.totalAmount)}</td>
+                <td>${statusBadge(o.orderStatus)}</td>
+                <td style="font-size:.85rem;color:var(--text-secondary)">${formatDate(o.createdAt)}</td>
+                <td><a href="/admin-orders.html" class="btn btn-ghost btn-sm">Manage</a></td>
+              </tr>`).join('')}
+          </tbody></table></div>`
+        : '<div class="empty-state"><p>No orders yet</p></div>';
+      // Top Spenders — rendered from $lookup + $project + $unwind aggregation pipeline
+      document.getElementById('topSpenders').innerHTML = topSpenders && topSpenders.length
+        ? `<div style="display:flex;flex-direction:column;gap:.5rem">
+          ${topSpenders.map((s, i) => `
+            <div style="display:flex;align-items:center;gap:.75rem;padding:.6rem;border-radius:var(--radius);background:var(--bg-glass)">
+              <span style="width:24px;height:24px;background:var(--success);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:white;flex-shrink:0">${i+1}</span>
+              <div style="flex:1">
+                <div style="font-size:.9rem;font-weight:600">${s.name}</div>
+                <div style="font-size:.75rem;color:var(--text-muted)">${s.email}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:700;color:var(--primary)">${formatPrice(s.totalSpent)}</div>
+                <div style="font-size:.75rem;color:var(--text-muted)">${s.orderCount} order${s.orderCount !== 1 ? 's' : ''}</div>
+              </div>
+            </div>`).join('')}
+          </div>`
+        : '<p class="text-muted text-center">No orders yet</p>';
+    }
+
+    document.addEventListener('DOMContentLoaded', loadDashboard);
+  </script>
+</body>
+</html>
