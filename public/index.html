@@ -147,7 +147,7 @@
 
   <script src="/js/main.js"></script>
   <script>
-    // Load categories
+    // Load categories — horizontal scrollable strip
     async function loadCategories() {
       const { ok, data } = await apiCall('GET', '/categories');
       const container = document.getElementById('categoriesGrid');
@@ -155,56 +155,82 @@
         container.innerHTML = '<p class="text-center text-muted">No categories found.</p>';
         return;
       }
-      const cats = data.data.slice(0, 6);
-      container.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem">
+      const cats = data.data; // show all categories
+      // Category emoji fallbacks indexed by name (covers common food types)
+      const emojiMap = {
+        'biryani':'🍚','burger':'🍔','pizza':'🍕','chinese':'🥡',
+        'desserts':'🍰','dessert':'🍰','beverages':'🥤','beverage':'🥤',
+        'snacks':'🥨','snack':'🥨','default':'🍽️'
+      };
+      function catEmoji(name) {
+        const k = name.toLowerCase();
+        return emojiMap[k] || emojiMap[Object.keys(emojiMap).find(key => k.includes(key)) || 'default'];
+      }
+      container.innerHTML = `<div class="category-strip">
         ${cats.map(c => `
-          <a href="/menu.html?category=${c._id}" style="display:flex;flex-direction:column;align-items:center;gap:.75rem;
-            padding:1.5rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);
-            transition:var(--transition);text-decoration:none;color:var(--text-primary)"
-            onmouseover="this.style.borderColor='var(--primary)';this.style.transform='translateY(-4px)'"
-            onmouseout="this.style.borderColor='var(--border)';this.style.transform='translateY(0)'">
-            <img src="${c.image}" alt="${c.name}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:2px solid var(--border)" loading="lazy"/>
-            <span style="font-weight:600;font-size:.95rem">${c.name}</span>
+          <a href="/menu.html?category=${c._id}" class="cat-card">
+            <img class="cat-card-img"
+              src="${c.image || ''}"
+              alt="${c.name}"
+              loading="lazy"
+              onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+            />
+            <span style="display:none;width:68px;height:68px;border-radius:50%;background:var(--bg-card2);
+              border:2px solid var(--border);align-items:center;justify-content:center;
+              font-size:1.8rem;flex-shrink:0">${catEmoji(c.name)}</span>
+            <span class="cat-card-name">${c.name}</span>
           </a>
         `).join('')}
       </div>`;
     }
 
-    // Load featured foods (top rated)
+    // Load featured foods (top rated) — 6 items in a 3-column grid
     async function loadFeaturedFoods() {
-      const { ok, data } = await apiCall('GET', '/foods?sort=rating&limit=4&available=true');
+      const { ok, data } = await apiCall('GET', '/foods?sort=rating&limit=6&available=true');
       const container = document.getElementById('featuredFoods');
       if (!ok || !data.data?.foods?.length) {
         container.innerHTML = '<p class="text-center text-muted">No food items found.</p>';
         return;
       }
-      container.innerHTML = `<div class="food-grid">
+      container.innerHTML = `<div class="food-grid-home">
         ${data.data.foods.map(f => foodCard(f)).join('')}
       </div>`;
     }
 
     function foodCard(f) {
+      // Fallback shown when the image src is empty or fails to load
+      const imgFallback = `
+        this.onerror=null;
+        this.style.display='none';
+        this.parentElement.querySelector('.food-card-img-placeholder').style.display='flex';
+      `.replace(/\s+/g,' ').trim();
+
       return `
         <div class="food-card">
           <div class="food-card-img-wrapper">
-            <img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" />
+            ${f.image
+              ? `<img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" onerror="${imgFallback}" />`
+              : ''
+            }
+            <div class="food-card-img-placeholder" style="display:${f.image ? 'none' : 'flex'}">
+              <span class="ph-icon">🍽️</span>
+              <span>${f.category?.name || 'Food'}</span>
+            </div>
             <span class="food-card-badge">${f.category?.name || 'Food'}</span>
             ${!f.available ? '<span class="unavailable-badge">Unavailable</span>' : ''}
           </div>
           <div class="food-card-body">
             <div class="food-card-category">${f.category?.name || ''}</div>
             <h3 class="food-card-name">${f.name}</h3>
-            <p class="food-card-desc">${f.description}</p>
+            <p class="food-card-desc">${f.description || ''}</p>
             <div class="food-card-footer">
               <span class="food-price">₹${f.price}</span>
               <span class="food-rating">⭐ ${f.rating}</span>
             </div>
-            <div style="margin-top:.75rem">
-              ${f.available
-                ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
-                : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
-              }
-            </div>
+            ${f.available
+              ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+              : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
+            }
           </div>
         </div>`;
     }
