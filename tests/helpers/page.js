@@ -41,7 +41,9 @@ const ok = (data, message = "OK") => ({ status: 200, body: { success: true, mess
 const loadPage = async (path_, { user = null, routes = {}, confirm = true } = {}) => {
   const calls = [];
 
+  let csrfCounter = 0;
   const table = {
+    "GET /api/auth/csrf": () => ok({ csrfToken: `token-${++csrfCounter}` }),
     "GET /api/auth/me": user ? ok({ user }) : { status: 401, body: { success: false, message: "Authentication required" } },
     "GET /api/cart": ok({ items: [], total: 0 }),
     ...Object.fromEntries(
@@ -56,7 +58,7 @@ const loadPage = async (path_, { user = null, routes = {}, confirm = true } = {}
     const method = (opts.method || "GET").toUpperCase();
     const pathname = String(url).split("?")[0];
     const body = opts.body ? JSON.parse(opts.body) : undefined;
-    calls.push({ method, url: String(url), pathname, body });
+    calls.push({ method, url: String(url), pathname, body, headers: opts.headers || {} });
 
     let entry = table[`${method} ${pathname}`];
     if (typeof entry === "function") entry = entry(body, String(url));

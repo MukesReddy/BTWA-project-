@@ -292,6 +292,14 @@ const getUsers = async () => {
 // ─── Seeder Function ──────────────────────────────────────────────────────────
 
 const seedDatabase = async () => {
+  // The seeder deletes every order, user, food and category. Never let it run against a
+  // production database by accident (e.g. a copied .env).
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED_IN_PRODUCTION !== "true") {
+    console.error("❌ Refusing to seed: NODE_ENV=production. The seeder ERASES the database.");
+    console.error("   Set ALLOW_SEED_IN_PRODUCTION=true if you really intend to wipe it.");
+    process.exit(1);
+  }
+
   try {
     // Connect to MongoDB
     await mongoose.connect(process.env.MONGO_URI);

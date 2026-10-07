@@ -1,6 +1,6 @@
 // tests/helpers/factories.js — create real documents + logged-in supertest agents (integration tests)
 
-const request = require("supertest");
+const { newAgent, refreshCsrf } = require("./client");
 const User = require("../../models/User");
 const Category = require("../../models/Category");
 const Food = require("../../models/Food");
@@ -30,11 +30,12 @@ const createFood = async (overrides = {}) => {
   return Food.create({ name: `Food ${counter}`, price: 100, category, ...overrides });
 };
 
-/** Log in through the real API; returns a supertest agent holding the session cookie. */
+/** Log in through the real API; returns a supertest agent holding the session cookie + CSRF token. */
 const loginAgent = async (app, user) => {
-  const agent = request.agent(app);
+  const agent = await newAgent(app);
   const res = await agent.post("/api/auth/login").send({ email: user.email, password: PASSWORD });
   if (res.status !== 200) throw new Error(`login failed: ${res.status} ${JSON.stringify(res.body)}`);
+  await refreshCsrf(agent); // the session id (and so the token) changed at login
   return agent;
 };
 

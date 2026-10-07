@@ -21,6 +21,19 @@ const log = (message) => {
   if (process.env.DEBUG_TEST_DB) console.log(`[test-db] ${message}`);
 };
 
+let connectedUri = null;
+
+/**
+ * A MongoDB URI that points at the integration database (for spawning a REAL server process in a test).
+ * Only valid after connectTestDb(). Single-host URIs only (mongodb://host:port).
+ */
+const getTestMongoUri = () => {
+  if (!connectedUri) throw new Error("getTestMongoUri() called before connectTestDb()");
+  const url = new URL(connectedUri);
+  url.pathname = `/${DB_NAME}`;
+  return url.toString();
+};
+
 const connectTestDb = async () => {
   // Guard against the exact mistake that once broke this suite: a leftover bufferCommands=false
   // (unit-test setting) makes Model.init() run before the connection exists and crash.
@@ -41,6 +54,7 @@ const connectTestDb = async () => {
     uri = mongod.getUri();
   }
 
+  connectedUri = uri;
   try {
     await mongoose.connect(uri, { dbName: DB_NAME, serverSelectionTimeoutMS: 10000 });
   } catch (error) {
@@ -69,4 +83,4 @@ const disconnectTestDb = async () => {
   if (mongod) await mongod.stop();
 };
 
-module.exports = { connectTestDb, clearTestDb, disconnectTestDb };
+module.exports = { connectTestDb, clearTestDb, disconnectTestDb, getTestMongoUri, DB_NAME };

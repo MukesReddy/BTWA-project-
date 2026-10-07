@@ -8,9 +8,9 @@ const mongoose = require("mongoose");
  * Connect to MongoDB database
  * Uses async/await for non-blocking connection (BTWA Module 4: Async ops)
  */
-const connectDB = async () => {
+const connectDB = async (uri = process.env.MONGO_URI) => {
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
+    const conn = await mongoose.connect(uri);
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error(`❌ MongoDB Connection Error: ${error.message}`);
