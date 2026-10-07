@@ -33,6 +33,41 @@ describe("atomic add", () => {
     expect(items[0].quantity).toBe(10);
   });
 
+  test("REGRESSION (first-add race): repeated 10-way races on a brand-new cart never return a false 400", async () => {
+    // Each round is a fresh user, so every round is a race to create the cart. Before the fix,
+    // a request that lost the race could see the winner's line and wrongly answer
+    // "You can order at most 20 of one item".
+    const food = await createFood();
+    for (let round = 0; round < 15; round++) {
+      const user = await createUser();
+      const agent = await loginAgent(app, user);
+
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }))
+      );
+
+      expect(results.map((r) => r.status)).toEqual(Array(10).fill(200));
+      expect(await Cart.countDocuments({ user: user._id })).toBe(1);
+      const items = await lines(user);
+      expect(items).toHaveLength(1);
+      expect(items[0].quantity).toBe(10);
+    }
+  });
+
+  test("REGRESSION: concurrent first adds with different quantities (5 × 2) add up to exactly 10", async () => {
+    const user = await createUser();
+    const food = await createFood();
+    const agent = await loginAgent(app, user);
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 2 }))
+    );
+
+    expect(results.map((r) => r.status)).toEqual(Array(5).fill(200));
+    expect(await Cart.countDocuments({ user: user._id })).toBe(1);
+    expect((await lines(user))[0].quantity).toBe(10);
+  });
+
   test("simultaneous first adds of DIFFERENT foods → one cart containing both lines", async () => {
     const user = await createUser();
     const [a, b] = [await createFood(), await createFood()];

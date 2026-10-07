@@ -62,10 +62,15 @@ const buildCartResponse = async (cart) => {
  *
  *  1. Line already in cart → $inc its quantity with the positional operator `$`.
  *     The $elemMatch in the filter enforces the per-item maximum inside MongoDB.
- *  2. Line in cart but the filter above failed → the limit would be exceeded.
- *  3. No line yet → $push it (upsert creates the cart if the user has none).
- *     If two requests race to create the cart, the unique index on `user` makes
- *     the loser fail with E11000; we simply retry from step 1.
+ *  2. Step 1 matched nothing. That means EITHER there is no line yet, OR the line is at
+ *     the cap. Only report "limit" if a line that would really exceed the cap exists.
+ *     (Never infer the cap from "a line exists": a concurrent request may have created
+ *     the line a moment after step 1 ran — that is not a limit, just a lost race.)
+ *  3. Otherwise $push the line (upsert creates the cart if the user has none).
+ *     The filter `items.food: {$ne}` means it only matches when the line is absent. If
+ *     a concurrent request created the cart/line first, the upsert tries to insert a
+ *     second cart for the user, the unique index on `user` rejects it with E11000, and
+ *     we simply retry from step 1 (where the $inc now matches).
  */
 const addItemToCart = async (userId, food, quantity) => {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -79,8 +84,12 @@ const addItemToCart = async (userId, food, quantity) => {
     );
     if (incremented.matchedCount === 1) return "added";
 
-    // 2. line exists, so the only reason step 1 failed is the quantity cap
-    if (await Cart.exists({ user: userId, "items.food": food._id })) return "limit";
+    // 2. is there a line that would REALLY go over the cap? (see note above)
+    const wouldExceed = await Cart.exists({
+      user: userId,
+      items: { $elemMatch: { food: food._id, quantity: { $gt: MAX_CART_QUANTITY - quantity } } },
+    });
+    if (wouldExceed) return "limit";
 
     // 3. no line yet → push (BTWA Module 2: $push, upsert)
     try {

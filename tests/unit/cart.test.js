@@ -119,6 +119,85 @@ describe("POST /api/cart (add)", () => {
   });
 });
 
+describe("POST /api/cart — the concurrent first-add race (regression)", () => {
+  // A tiny stateful stand-in for ONE cart line in MongoDB. It answers every query according to
+  // what the filter actually asks, so it can reproduce the real interleaving deterministically:
+  //
+  //   request A: step 1 ($inc)  -> no cart yet, no match
+  //   request B: creates the cart + line (lands right after A's step 1)
+  //   request A: step 2 / 3     -> must NOT report a quantity limit; must retry and add
+  const mongoLine = (initial = null, { raceAfterFirstMiss = false } = {}) => {
+    const db = { qty: initial, raceFired: false };
+    const lineExists = () => db.qty !== null;
+
+    jest.spyOn(Cart, "updateOne").mockImplementation(async (filter, update) => {
+      if (filter.items && filter.items.$elemMatch) {              // step 1: guarded $inc
+        const room = filter.items.$elemMatch.quantity.$lte;
+        if (lineExists() && db.qty <= room) {
+          db.qty += update.$inc["items.$.quantity"];
+          return { matchedCount: 1 };
+        }
+        if (raceAfterFirstMiss && !db.raceFired) {                // the concurrent request wins here
+          db.raceFired = true;
+          db.qty = 1;
+        }
+        return { matchedCount: 0 };
+      }
+      if (lineExists()) throw duplicateKey();                      // step 3: unique index on user
+      db.qty = update.$push.items.quantity;
+      return { upsertedCount: 1 };
+    });
+
+    jest.spyOn(Cart, "exists").mockImplementation(async (filter) => {
+      const cap = filter.items && filter.items.$elemMatch && filter.items.$elemMatch.quantity.$gt;
+      if (cap !== undefined) return lineExists() && db.qty > cap ? { _id: 1 } : null; // "over the cap?"
+      return lineExists() ? { _id: 1 } : null;                                         // "any line?"
+    });
+    return db;
+  };
+
+  let agent, userId, f;
+  beforeEach(async () => {
+    ({ agent, userId } = await loginAs(app));
+    f = food();
+    jest.spyOn(Food, "findById").mockResolvedValue({ ...f, _id: { toString: () => f._id } });
+    jest.spyOn(Food, "find").mockReturnValue(query([f]));
+    jest.spyOn(Cart, "findOne").mockImplementation(() => query(cartDoc(userId, [{ food: { toString: () => f._id }, quantity: 1, price: 120 }])));
+  });
+
+  test("a concurrent request creating the line right after our first miss is NOT a quantity limit", async () => {
+    const db = mongoLine(null, { raceAfterFirstMiss: true });
+
+    const res = await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 });
+
+    expect(res.status).toBe(200);          // used to be 400 "You can order at most 20 of one item"
+    expect(db.qty).toBe(2);                // the other request's unit + ours: nothing lost, nothing doubled
+    expect(Cart.updateOne).toHaveBeenCalledTimes(3); // $inc (miss) → push (E11000) → $inc (hit)
+  });
+
+  test("a line that is really at the cap is still refused with 400", async () => {
+    const db = mongoLine(MAX_CART_QUANTITY);
+    const res = await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(new RegExp(`at most ${MAX_CART_QUANTITY}`));
+    expect(db.qty).toBe(MAX_CART_QUANTITY);
+  });
+
+  test("a line one below the cap accepts exactly one more, then refuses", async () => {
+    const db = mongoLine(MAX_CART_QUANTITY - 1);
+    expect((await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 })).status).toBe(200);
+    expect((await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 })).status).toBe(400);
+    expect(db.qty).toBe(MAX_CART_QUANTITY);
+  });
+
+  test("the cap check asks about a line that would exceed the cap, not merely 'a line exists'", async () => {
+    mongoLine(null, { raceAfterFirstMiss: true });
+    await agent.post("/api/cart").send({ foodId: f._id, quantity: 3 });
+    const filter = Cart.exists.mock.calls[0][0];
+    expect(filter.items.$elemMatch.quantity).toEqual({ $gt: MAX_CART_QUANTITY - 3 });
+  });
+});
+
 describe("PUT /api/cart/:foodId (set quantity)", () => {
   test("sets the matched line atomically with the positional operator", async () => {
     const { agent, userId } = await loginAs(app);
