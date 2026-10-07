@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSRF attacker demo (manual test)</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+    button { margin: .25rem .5rem .25rem 0; padding: .45rem .8rem; }
+    pre { background: #111; color: #9f9; padding: 1rem; white-space: pre-wrap; }
+    code { background: #eee; padding: 0 .25rem; }
+    input { width: 22rem; }
+  </style>
+</head>
+<body>
+  <h1>😈 CSRF attacker page (manual test)</h1>
+  <p>This page is on <code id="me"></code>. Log in to FoodieHub at the target below in <b>this same browser</b>, then press the
+     buttons. Every attack should FAIL, and your cart/orders must be unchanged afterwards.</p>
+
+  <p>Target app: <input id="target" value="http://localhost:5000" /></p>
+  <p>A food id from your menu (needed by the cart attacks): <input id="foodId" placeholder="24-hex food id, e.g. from /api/foods" /></p>
+
+  <h3>Attacks</h3>
+  <button onclick="jsonFetch('/api/cart', {foodId: v('foodId'), quantity: 5})">1. fetch() JSON → add 5 to cart</button>
+  <button onclick="textPlain('/api/cart', {foodId: v('foodId'), quantity: 5})">2. text/plain no-cors → add 5 to cart</button>
+  <button onclick="formPost('/api/cart', {foodId: v('foodId'), quantity: 5})">3. auto-submitted HTML form → add 5 to cart</button>
+  <button onclick="jsonFetch('/api/orders', {deliveryAddress:{street:'1 Evil Rd',city:'X',state:'Y',pincode:'500001'}, paymentMethod:'Cash on Delivery'})">4. fetch() JSON → place an order</button>
+  <button onclick="jsonFetch('/api/auth/logout', null)">5. fetch() → log me out</button>
+
+  <h3>What you should see</h3>
+  <ul>
+    <li>1, 4, 5: the browser sends a CORS <i>preflight</i> first and the app answers it WITHOUT any Access-Control-Allow-* header → "blocked by the browser".</li>
+    <li>2: the request IS sent (it is a "simple request"), but the app answers <b>403/415</b>; the page cannot read it (opaque).</li>
+    <li>3: the browser navigates to the app and you see JSON <code>{"success":false,"message":"Cross-site request blocked…"}</code> (403).</li>
+    <li>In the app's terminal (morgan) you see <code>403</code> / <code>OPTIONS … 401</code> (preflight, no CORS headers returned) lines, never a <code>200</code> for these.</li>
+    <li>Afterwards open the app: cart unchanged, no new order, still logged in.</li>
+  </ul>
+  <pre id="log">(results appear here)</pre>
+
+  <script>
+    document.getElementById('me').textContent = location.origin;
+    const v = (id) => document.getElementById(id).value.trim();
+    const base = () => v('target').replace(/\/$/, '');
+    const log = (msg) => { document.getElementById('log').textContent += '\n' + msg; };
+
+    async function jsonFetch(path, body) {
+      try {
+        const res = await fetch(base() + path, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        log(`JSON fetch ${path}: response status ${res.status} (the app answered — check it is 403, not 200)`);
+      } catch (e) {
+        log(`JSON fetch ${path}: BLOCKED by the browser (${e.message}) — the CORS preflight was refused ✔`);
+      }
+    }
+
+    async function textPlain(path, body) {
+      try {
+        await fetch(base() + path, { method: 'POST', mode: 'no-cors', credentials: 'include',
+          headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+        log(`text/plain ${path}: request was sent (opaque response). Check the app terminal: must be 403/415, not 200.`);
+      } catch (e) { log(`text/plain ${path}: blocked (${e.message})`); }
+    }
+
+    function formPost(path, fields) {
+      const form = document.createElement('form');
+      form.method = 'POST'; form.action = base() + path;
+      for (const [k, val] of Object.entries(fields)) {
+        const input = document.createElement('input'); input.type = 'hidden'; input.name = k; input.value = val; form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    }
+  </script>
+</body>
+</html>

@@ -11,6 +11,7 @@ const Cart = require("../../models/Cart");
 const Order = require("../../models/Order");
 const logger = require("../../utils/logger");
 const { query } = require("../helpers/chain");
+const { newAgent } = require("../helpers/client");
 const { loginAs, newId } = require("../helpers/auth");
 const { revokeUserSessions } = require("../../utils/sessions");
 
@@ -103,9 +104,9 @@ describe("revokeUserSessions", () => {
 });
 
 describe("deactivated accounts cannot log in", () => {
-  const login = (user) => {
+  const login = async (user) => {
     jest.spyOn(User, "findOne").mockReturnValue(query(user));
-    return request(app).post("/api/auth/login").send({ email: "x@example.com", password: "secret12" });
+    return (await newAgent(app)).post("/api/auth/login").send({ email: "x@example.com", password: "secret12" });
   };
   const userDoc = (over) => ({
     _id: new mongoose.Types.ObjectId(), name: "X", email: "x@example.com", role: "customer",
@@ -122,7 +123,7 @@ describe("deactivated accounts cannot log in", () => {
 
   test("a wrong password still gives the generic 401, not the account status", async () => {
     jest.spyOn(User, "findOne").mockReturnValue(query(userDoc({ isActive: false })));
-    const res = await request(app).post("/api/auth/login").send({ email: "x@example.com", password: "wrongpass" });
+    const res = await (await newAgent(app)).post("/api/auth/login").send({ email: "x@example.com", password: "wrongpass" });
     expect(res.status).toBe(401);
   });
 

@@ -41,10 +41,12 @@
           </button>
         </form>
 
-        <div class="auth-divider">— or sign in as —</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
-          <button class="btn btn-ghost" onclick="quickLogin('admin@foodiehub.com','admin123')">⚙️ Admin Demo</button>
-          <button class="btn btn-ghost" onclick="quickLogin('rahul@example.com','password123')">👤 Customer Demo</button>
+        <!-- Demo buttons: filled in by the script below ONLY if the server says demo login is enabled
+             (development by default; GET /api/auth/demo-accounts answers 404 in production).
+             No credentials are written into this HTML. -->
+        <div id="demoSection" hidden>
+          <div class="auth-divider">— or sign in as —</div>
+          <div id="demoButtons" style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem"></div>
         </div>
 
         <div class="auth-link-row">
@@ -84,8 +86,9 @@
 
       if (ok) {
         showToast(`Welcome back! 🎉`, 'success');
-        const redirect = new URLSearchParams(window.location.search).get('redirect') || '/menu.html';
-        setTimeout(() => window.location.href = redirect, 700);
+        // Only same-origin paths to our own pages are honoured (see safeRedirect in main.js)
+        const redirect = safeRedirect(new URLSearchParams(window.location.search).get('redirect'));
+        setTimeout(() => navigateTo(redirect), 700);
       } else {
         showAlert('alertBox', data.message || 'Login failed', 'error');
         btn.disabled = false;
@@ -93,11 +96,30 @@
       }
     });
 
+    // Dev-only demo buttons. The server decides: in production the endpoint is a 404 and nothing is shown.
+    async function loadDemoAccounts() {
+      const { ok, data } = await apiCall('GET', '/auth/demo-accounts');
+      if (!ok || !data || !Array.isArray(data.data) || data.data.length === 0) return;
+
+      const box = document.getElementById('demoButtons');
+      data.data.forEach((account) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-ghost';
+        btn.textContent = `${account.icon || ''} ${account.label}`.trim(); // textContent: never parsed as HTML
+        btn.addEventListener('click', () => quickLogin(account.email, account.password));
+        box.appendChild(btn);
+      });
+      document.getElementById('demoSection').hidden = false;
+    }
+
     function quickLogin(email, pwd) {
       document.getElementById('email').value = email;
       document.getElementById('password').value = pwd;
       document.getElementById('loginForm').dispatchEvent(new Event('submit'));
     }
+
+    loadDemoAccounts();
   </script>
 </body>
 </html>

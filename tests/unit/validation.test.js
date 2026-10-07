@@ -6,6 +6,7 @@ const User = require("../../models/User");
 const Food = require("../../models/Food");
 const Category = require("../../models/Category");
 const { query } = require("../helpers/chain");
+const { newAgent } = require("../helpers/client");
 const { loginAs, newId } = require("../helpers/auth");
 
 const fields = (res) => (res.body.errors || []).map((e) => e.field);
@@ -14,7 +15,7 @@ describe("POST /api/auth/register", () => {
   const valid = { name: "Asha Rao", email: "asha@example.com", password: "secret12" };
 
   const expectRejected = async (payload, field) => {
-    const res = await request(app).post("/api/auth/register").send(payload);
+    const res = await (await newAgent(app)).post("/api/auth/register").send(payload);
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
     expect(typeof res.body.message).toBe("string"); // old consumers still read `message`
@@ -28,12 +29,12 @@ describe("POST /api/auth/register", () => {
   });
 
   test("valid payload is accepted", async () => {
-    const res = await request(app).post("/api/auth/register").send(valid);
+    const res = await (await newAgent(app)).post("/api/auth/register").send(valid);
     expect(res.status).toBe(201);
   });
 
   test("empty body lists every missing field", async () => {
-    const res = await request(app).post("/api/auth/register").send({});
+    const res = await (await newAgent(app)).post("/api/auth/register").send({});
     expect(res.status).toBe(400);
     expect(fields(res)).toEqual(expect.arrayContaining(["name", "email", "password"]));
   });
@@ -62,7 +63,7 @@ describe("POST /api/auth/register", () => {
     await expectRejected({ ...valid, phone: "abc" }, "phone");
     await expectRejected({ ...valid, address: { pincode: "12" } }, "address.pincode");
     await expectRejected({ ...valid, address: "somewhere" }, "address");
-    const ok = await request(app)
+    const ok = await (await newAgent(app))
       .post("/api/auth/register")
       .send({ ...valid, phone: "9876543210", address: { street: "1 Main St", city: "Hyderabad", state: "TS", pincode: "500001" } });
     expect(ok.status).toBe(201);
@@ -76,7 +77,7 @@ describe("POST /api/auth/login", () => {
     [{ email: "a@b.co" }, "password"],
     [{ password: "x" }, "email"],
   ])("%j is rejected", async (payload, field) => {
-    const res = await request(app).post("/api/auth/login").send(payload);
+    const res = await (await newAgent(app)).post("/api/auth/login").send(payload);
     expect(res.status).toBe(400);
     expect(fields(res)).toContain(field);
   });

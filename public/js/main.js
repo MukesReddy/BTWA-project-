@@ -28,11 +28,42 @@ function registerActions(handlers) {
   });
 }
 
+/* ── CSRF token ─────────────────────────────────────────────
+   Every state-changing request (POST/PUT/PATCH/DELETE) must carry the
+   per-session secret in the X-CSRF-Token header. Pages from OTHER sites
+   cannot read it (no CORS), so they cannot forge our requests even though
+   the browser would attach the session cookie. The token is fetched lazily
+   and cached; it changes whenever the session changes (login / logout).   */
+let csrfToken = null;
+
+async function getCsrfToken() {
+  if (!csrfToken) {
+    const res = await fetch(API_BASE + '/auth/csrf', { credentials: 'include' });
+    const json = await res.json();
+    csrfToken = json && json.data ? json.data.csrfToken : null;
+  }
+  return csrfToken;
+}
+
 /* ── API Helper ─────────────────────────────────────────── */
-async function apiCall(method, endpoint, body = null) {
+const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+async function apiCall(method, endpoint, body = null, alreadyRetried = false) {
+  const verb = method.toUpperCase();
+  const writes = !SAFE_METHODS.includes(verb);
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (writes) {
+    try {
+      headers['X-CSRF-Token'] = await getCsrfToken();
+    } catch {
+      return { ok: false, status: 0, data: { success: false, message: 'Could not reach the server. Please try again.' } };
+    }
+  }
+
   const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
+    method: verb,
+    headers,
     credentials: 'include', // Send session cookie
   };
   if (body) opts.body = JSON.stringify(body);
@@ -44,7 +75,48 @@ async function apiCall(method, endpoint, body = null) {
   } catch {
     data = { success: false, message: 'Unexpected response from the server' };
   }
+
+  // Logging in or out replaces the server session, so the old token is dead.
+  if (endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/logout')) csrfToken = null;
+
+  // Token rejected (session expired / replaced in another tab): fetch a fresh one and retry once.
+  if (writes && res.status === 403 && data && data.code === 'CSRF_TOKEN' && !alreadyRetried) {
+    csrfToken = null;
+    return apiCall(method, endpoint, body, true);
+  }
+
   return { ok: res.ok, status: res.status, data };
+}
+
+/* ── Safe post-login redirect ───────────────────────────────
+   login.html?redirect=... is attacker-controllable (it can be put in a link),
+   so a naive `window.location.href = redirect` is an open redirect / phishing
+   hop (and `javascript:` URLs would run script). Only same-origin paths to
+   OUR OWN pages are accepted; anything else falls back to the menu.        */
+const ALLOWED_REDIRECT_PATHS = [
+  '/', '/index.html', '/menu.html', '/food-details.html', '/cart.html', '/checkout.html',
+  '/orders.html', '/profile.html', '/admin.html', '/admin-users.html', '/admin-food.html',
+  '/admin-categories.html', '/admin-orders.html',
+];
+
+function safeRedirect(target, fallback = '/menu.html') {
+  if (typeof target !== 'string' || target.length === 0 || target.length > 300) return fallback;
+  if (target[0] !== '/' || target[1] === '/' || target.includes('\\')) return fallback; // "//evil.com", "/\evil.com", "https://..."
+  if (/[\u0000-\u001f\u007f]/.test(target)) return fallback;                           // control characters / header tricks
+  let url;
+  try {
+    url = new URL(target, window.location.origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== window.location.origin) return fallback;
+  if (!ALLOWED_REDIRECT_PATHS.includes(url.pathname)) return fallback;
+  return url.pathname + url.search;
+}
+
+/* Single place that changes the page (so tests can observe it). */
+function navigateTo(url) {
+  window.location.href = url;
 }
 
 /* ── Toast Notification ─────────────────────────────────── */
