@@ -5,7 +5,7 @@
 
 const Category = require("../models/Category");
 const Food = require("../models/Food");
-const { sendSuccess, sendError } = require("../utils/helpers");
+const { sendSuccess, sendError, escapeRegex } = require("../utils/helpers");
 
 /**
  * @route   GET /api/categories
@@ -52,7 +52,7 @@ const createCategory = async (req, res, next) => {
     const { name, description, image } = req.body;
 
     // Check for duplicate category name
-    const existing = await Category.findOne({ name: { $regex: new RegExp(`^${name}$`, "i") } });
+    const existing = await Category.findOne({ name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") } });
     if (existing) {
       return sendError(res, 409, "Category with this name already exists");
     }

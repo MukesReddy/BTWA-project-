@@ -8,10 +8,10 @@
 //  • Every text field has a maximum length.
 //  • Sanitizers (.trim(), .toInt() …) write the cleaned value back to req.body.
 
-const { validationResult, body } = require("express-validator");
+const { validationResult, body, query } = require("express-validator");
 const Category = require("../models/Category");
 const { sendError, isValidObjectId } = require("../utils/helpers");
-const { MAX_CART_QUANTITY } = require("../utils/constants");
+const { MAX_CART_QUANTITY, ORDER_STATUSES, MAX_SEARCH_LENGTH } = require("../utils/constants");
 
 /**
  * handleValidationErrors
@@ -315,6 +315,79 @@ const validateOrder = [
   handleValidationErrors,
 ];
 
+// ─── Query-string validation (P1.8) ──────────────────────────────────────────
+// Query parameters end up inside MongoDB filters, so each one must be a plain string of the
+// expected shape. (The app also uses Express's "simple" query parser, so ?a[$ne]=x is never
+// turned into a nested object; repeated keys like ?search=a&search=b still arrive as arrays,
+// which is why every rule starts with .isString().)
+
+const textQuery = (field) =>
+  query(field)
+    .optional()
+    .isString()
+    .withMessage(`${field} must be a single text value`)
+    .bail()
+    .trim()
+    .isLength({ max: MAX_SEARCH_LENGTH })
+    .withMessage(`${field} must be at most ${MAX_SEARCH_LENGTH} characters`);
+
+const enumQuery = (field, allowed) =>
+  query(field)
+    .optional()
+    .isString()
+    .withMessage(`${field} must be a single value`)
+    .bail()
+    .isIn(["", ...allowed])
+    .withMessage(`${field} must be one of: ${allowed.join(", ")}`);
+
+const intQuery = (field, { max }) =>
+  query(field)
+    .optional()
+    .isString()
+    .withMessage(`${field} must be a whole number`)
+    .bail()
+    .isInt({ min: 1, max })
+    .withMessage(`${field} must be a whole number between 1 and ${max}`);
+
+const priceQuery = (field) =>
+  query(field)
+    .optional({ values: "falsy" })
+    .isString()
+    .withMessage(`${field} must be a number`)
+    .bail()
+    .isFloat({ min: 0, max: 10000000 })
+    .withMessage(`${field} must be a number between 0 and 10000000`);
+
+/** GET /api/foods */
+const validateFoodQuery = [
+  textQuery("search"),
+  query("category")
+    .optional({ values: "falsy" })
+    .isString()
+    .withMessage("category must be a single ID")
+    .bail()
+    .isMongoId()
+    .withMessage("category must be a valid ID"),
+  priceQuery("minPrice"),
+  priceQuery("maxPrice"),
+  enumQuery("available", ["true", "false"]),
+  enumQuery("sort", ["price_asc", "price_desc", "rating", "newest"]),
+  intQuery("page", { max: 100000 }),
+  intQuery("limit", { max: 1000 }), // the controller still caps the page size
+  handleValidationErrors,
+];
+
+/** GET /api/admin/users */
+const validateUserQuery = [textQuery("search"), enumQuery("role", ["customer", "admin"]), handleValidationErrors];
+
+/** GET /api/admin/orders */
+const validateOrderQuery = [
+  enumQuery("status", ORDER_STATUSES),
+  intQuery("page", { max: 100000 }),
+  intQuery("limit", { max: 1000 }),
+  handleValidationErrors,
+];
+
 /**
  * Validate profile update (PUT /api/users/profile). Every field is optional,
  * but anything that IS sent must be valid.
@@ -345,6 +418,9 @@ module.exports = {
   validateCartUpdate,
   validateOrder,
   validateProfile,
+  validateFoodQuery,
+  validateUserQuery,
+  validateOrderQuery,
   validateIdParam,
   handleValidationErrors,
 };

@@ -47,6 +47,15 @@ const isValidObjectId = (id) => {
 };
 
 /**
+ * Escape text so it is matched LITERALLY inside a MongoDB $regex / JavaScript RegExp.
+ * Without this, a search for "C++" or "(" is an invalid pattern (500), ".*" matches everything,
+ * and a crafted pattern like "(a+)+$" can freeze the database (ReDoS).
+ * @param {string} text
+ * @returns {string}
+ */
+const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&");
+
+/**
  * Sanitize user object — remove sensitive fields before sending to client
  * @param {object} user - Mongoose user document
  * @returns {object} Safe user object
@@ -72,6 +81,7 @@ module.exports = {
   sendError,
   calculateTotal,
   isValidObjectId,
+  escapeRegex,
   sanitizeUser,
   formatCurrency,
 };

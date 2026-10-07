@@ -16,7 +16,7 @@ const {
 } = require("../controllers/adminController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { isAdmin } = require("../middleware/adminMiddleware");
-const { validateIdParam } = require("../middleware/validationMiddleware");
+const { validateIdParam, validateUserQuery, validateOrderQuery } = require("../middleware/validationMiddleware");
 
 // Apply auth + admin middleware to ALL admin routes
 router.use(isAuthenticated, isAdmin);
@@ -28,11 +28,11 @@ router.param("id", validateIdParam);
 router.get("/dashboard", getDashboard);
 
 // User management
-router.get("/users", getAllUsers);
+router.get("/users", validateUserQuery, getAllUsers);
 router.delete("/users/:id", deleteUser);
 
 // Order management
-router.get("/orders", getAllOrders);
+router.get("/orders", validateOrderQuery, getAllOrders);
 router.put("/orders/:id/status", updateOrderStatus);
 
 // CSV Export (BTWA Module 5: Streams demo)

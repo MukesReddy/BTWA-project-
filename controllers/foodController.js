@@ -6,7 +6,7 @@
 
 const Food = require("../models/Food");
 const Cart = require("../models/Cart");
-const { sendSuccess, sendError } = require("../utils/helpers");
+const { sendSuccess, sendError, escapeRegex } = require("../utils/helpers");
 
 /**
  * @route   GET /api/foods
@@ -43,10 +43,13 @@ const getFoods = async (req, res, next) => {
     const query = {};
 
     // Text search using $regex (BTWA Module 2: Regex queries)
+    // The text is escaped so it is matched literally ("C++" works, ".*" is not a wildcard, no ReDoS).
+    // `search` is already validated as a short string by validateFoodQuery.
     if (search && search.trim()) {
+      const pattern = escapeRegex(search.trim());
       query.$or = [
-        { name: { $regex: search.trim(), $options: "i" } },
-        { description: { $regex: search.trim(), $options: "i" } },
+        { name: { $regex: pattern, $options: "i" } },
+        { description: { $regex: pattern, $options: "i" } },
       ];
     }
 

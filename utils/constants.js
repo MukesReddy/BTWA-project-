@@ -6,4 +6,10 @@ module.exports = {
   // Maximum quantity of ONE food item allowed in a cart. Enforced by the
   // express-validator rules, the atomic cart update filter and the Cart schema.
   MAX_CART_QUANTITY: 20,
+
+  // Allowed values of Order.orderStatus (same list as the schema enum in models/Order.js).
+  ORDER_STATUSES: ["Pending", "Confirmed", "Preparing", "Out for Delivery", "Delivered", "Cancelled"],
+
+  // Longest search text accepted by the menu / admin user search.
+  MAX_SEARCH_LENGTH: 100,
 };

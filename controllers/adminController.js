@@ -9,7 +9,8 @@ const Order = require("../models/Order");
 const Food = require("../models/Food");
 const Cart = require("../models/Cart");
 const { getDashboardStats } = require("../services/analyticsService");
-const { sendSuccess, sendError, sanitizeUser } = require("../utils/helpers");
+const { sendSuccess, sendError, sanitizeUser, escapeRegex } = require("../utils/helpers");
+const { ORDER_STATUSES } = require("../utils/constants");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
 const emitter = require("../utils/eventEmitter");   // BTWA Module 5: EventEmitter
 const { revokeUserSessions } = require("../utils/sessions");
@@ -40,16 +41,17 @@ const getAllUsers = async (req, res, next) => {
     const { role, search } = req.query;
     const query = {};
 
-    // Filter by role (BTWA Module 2: Query operators)
-    if (role && ["customer", "admin"].includes(role)) {
+    // Filter by role (BTWA Module 2: Query operators) — role is validated by validateUserQuery
+    if (role) {
       query.role = role;
     }
 
-    // Search by name or email (BTWA Module 2: $or, $regex)
+    // Search by name or email (BTWA Module 2: $or, $regex). Escaped: matched literally, never as a pattern.
     if (search) {
+      const pattern = escapeRegex(search);
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: pattern, $options: "i" } },
+        { email: { $regex: pattern, $options: "i" } },
       ];
     }
 
@@ -71,7 +73,9 @@ const getAllUsers = async (req, res, next) => {
  */
 const getAllOrders = async (req, res, next) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
+    const { status } = req.query; // status / page / limit are validated by validateOrderQuery
+    const pageNum = parseInt(req.query.page, 10) || 1;
+    const limitNum = Math.min(100, parseInt(req.query.limit, 10) || 20);
     const query = {};
 
     // Filter by status (BTWA Module 2: Query by enum field)
@@ -79,20 +83,20 @@ const getAllOrders = async (req, res, next) => {
       query.orderStatus = status;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
     // BTWA Module 3: Mongoose populate — Order → User
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(limitNum)
       .populate("user", "name email phone");
 
     const total = await Order.countDocuments(query);
 
     return sendSuccess(res, 200, "Orders retrieved", {
       orders,
-      pagination: { total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) },
+      pagination: { total, page: pageNum, totalPages: Math.ceil(total / limitNum) },
     });
   } catch (error) {
     next(error);
@@ -109,7 +113,7 @@ const getAllOrders = async (req, res, next) => {
 const updateOrderStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
-    const validStatuses = ["Pending", "Confirmed", "Preparing", "Out for Delivery", "Delivered", "Cancelled"];
+    const validStatuses = ORDER_STATUSES;
 
     if (!status || !validStatuses.includes(status)) {
       return sendError(res, 400, `Invalid status. Valid values: ${validStatuses.join(", ")}`);
