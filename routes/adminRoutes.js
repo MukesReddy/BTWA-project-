@@ -16,9 +16,13 @@ const {
 } = require("../controllers/adminController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { isAdmin } = require("../middleware/adminMiddleware");
+const { validateIdParam } = require("../middleware/validationMiddleware");
 
 // Apply auth + admin middleware to ALL admin routes
 router.use(isAuthenticated, isAdmin);
+
+// Reject malformed ObjectIds with 400 (runs after the auth checks above)
+router.param("id", validateIdParam);
 
 // Dashboard
 router.get("/dashboard", getDashboard);

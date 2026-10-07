@@ -7,10 +7,12 @@
 const User = require("../models/User");
 const Order = require("../models/Order");
 const Food = require("../models/Food");
+const Cart = require("../models/Cart");
 const { getDashboardStats } = require("../services/analyticsService");
 const { sendSuccess, sendError, sanitizeUser } = require("../utils/helpers");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
 const emitter = require("../utils/eventEmitter");   // BTWA Module 5: EventEmitter
+const { revokeUserSessions } = require("../utils/sessions");
 
 /**
  * @route   GET /api/admin/dashboard
@@ -216,7 +218,7 @@ const exportOrdersCSV = async (req, res, next) => {
 
 /**
  * @route   DELETE /api/admin/users/:id
- * @desc    Delete a user (admin only)
+ * @desc    Delete a user, or deactivate them if they have orders (admin only)
  * @access  Admin
  */
 const deleteUser = async (req, res, next) => {
@@ -226,12 +228,36 @@ const deleteUser = async (req, res, next) => {
       return sendError(res, 400, "You cannot delete your own account");
     }
 
-    const user = await User.findByIdAndDelete(req.params.id);
+    const user = await User.findById(req.params.id);
     if (!user) {
       return sendError(res, 404, "User not found");
     }
 
-    return sendSuccess(res, 200, "User deleted successfully");
+    // Referential integrity: orders point at their user. A user who has placed
+    // orders is DEACTIVATED (history keeps its owner, admin order views keep working);
+    // a user with no orders is deleted outright.
+    const hasOrders = await Order.exists({ user: user._id });
+
+    if (hasOrders) {
+      await User.updateOne({ _id: user._id }, { $set: { isActive: false } });
+    } else {
+      await User.deleteOne({ _id: user._id });
+    }
+
+    // Either way the account is gone from the customer's point of view:
+    // drop their cart and log them out of every device.
+    await Cart.deleteOne({ user: user._id });
+    await revokeUserSessions(user._id);
+
+    if (hasOrders) {
+      return sendSuccess(
+        res,
+        200,
+        "User deactivated. Their order history has been kept.",
+        { action: "deactivated" }
+      );
+    }
+    return sendSuccess(res, 200, "User deleted successfully", { action: "deleted" });
   } catch (error) {
     next(error);
   }

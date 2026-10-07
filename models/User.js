@@ -53,6 +53,12 @@ const userSchema = new mongoose.Schema(
       enum: ["customer", "admin"],
       default: "customer",
     },
+    // false = deactivated by an admin. Used instead of deleting users who have
+    // placed orders, so order history keeps its owner. Login is refused.
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true, // Auto-creates createdAt and updatedAt (BTWA Module 3: Mongoose timestamps)

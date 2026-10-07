@@ -13,9 +13,12 @@ const {
 } = require("../controllers/categoryController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { isAdmin } = require("../middleware/adminMiddleware");
-const { validateCategory } = require("../middleware/validationMiddleware");
+const { validateCategory, validateIdParam } = require("../middleware/validationMiddleware");
 
 // Public routes
+// Reject malformed ObjectIds with 400 before any controller runs
+router.param("id", validateIdParam);
+
 router.get("/", getCategories);
 router.get("/:id", getCategoryById);
 

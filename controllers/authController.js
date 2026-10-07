@@ -61,6 +61,12 @@ const login = async (req, res, next) => {
       return sendError(res, 401, "Invalid email or password");
     }
 
+    // Deactivated accounts keep their order history but can no longer log in.
+    // Checked AFTER the password so we do not reveal account status to strangers.
+    if (user.isActive === false) {
+      return sendError(res, 403, "This account has been deactivated. Please contact support.");
+    }
+
     // Create session — store userId and role (BTWA Module 10: express-session)
     req.session.userId = user._id.toString();
     req.session.role = user.role;

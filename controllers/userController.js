@@ -32,11 +32,20 @@ const updateProfile = async (req, res, next) => {
   try {
     const { name, phone, address } = req.body;
 
-    // Only update allowed fields (security: role cannot be changed here)
+    // Only update allowed fields (security: role cannot be changed here).
+    // `!== undefined` (not truthiness) so phone can be cleared with ''.
     const updateData = {};
-    if (name)    updateData.name = name;
-    if (phone)   updateData.phone = phone;
-    if (address) updateData.address = address;
+    if (name !== undefined)  updateData.name = name;
+    if (phone !== undefined) updateData.phone = phone;
+    if (address !== undefined) {
+      // Whitelist address keys — never store arbitrary client-supplied properties
+      updateData.address = {
+        street:  address.street,
+        city:    address.city,
+        state:   address.state,
+        pincode: address.pincode,
+      };
+    }
 
     const user = await User.findByIdAndUpdate(
       req.session.userId,
@@ -47,6 +56,9 @@ const updateProfile = async (req, res, next) => {
     if (!user) {
       return sendError(res, 404, "User not found");
     }
+
+    // Keep the session copy of the name in sync with the database
+    req.session.userName = user.name;
 
     return sendSuccess(res, 200, "Profile updated successfully", sanitizeUser(user));
   } catch (error) {

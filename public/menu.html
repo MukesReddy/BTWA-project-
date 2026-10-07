@@ -161,23 +161,23 @@
       return `
         <div class="food-card">
           <div class="food-card-img-wrapper">
-            <a href="/food-details.html?id=${f._id}">
-              <img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" />
+            <a href="/food-details.html?id=${esc(f._id)}">
+              <img class="food-card-img" src="${esc(f.image)}" alt="${esc(f.name)}" loading="lazy" />
             </a>
-            <span class="food-card-badge">${f.category?.name || 'Food'}</span>
+            <span class="food-card-badge">${esc(f.category?.name || 'Food')}</span>
             ${!f.available ? '<span class="unavailable-badge">Unavailable</span>' : ''}
           </div>
           <div class="food-card-body">
-            <div class="food-card-category">${f.category?.name || ''}</div>
-            <a href="/food-details.html?id=${f._id}"><h3 class="food-card-name">${f.name}</h3></a>
-            <p class="food-card-desc">${f.description}</p>
+            <div class="food-card-category">${esc(f.category?.name || '')}</div>
+            <a href="/food-details.html?id=${esc(f._id)}"><h3 class="food-card-name">${esc(f.name)}</h3></a>
+            <p class="food-card-desc">${esc(f.description)}</p>
             <div class="food-card-footer">
-              <span class="food-price">₹${f.price}</span>
-              <span class="food-rating">⭐ ${f.rating}</span>
+              <span class="food-price">₹${esc(f.price)}</span>
+              <span class="food-rating">⭐ ${esc(f.rating)}</span>
             </div>
             <div style="margin-top:.75rem">
               ${f.available
-                ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+                ? `<button class="btn btn-primary btn-full btn-sm" data-action="addToCart" data-id="${esc(f._id)}" data-name="${esc(f.name)}">🛒 Add to Cart</button>`
                 : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
               }
             </div>
@@ -191,7 +191,7 @@
       let html = '';
       for (let i = 1; i <= pg.totalPages; i++) {
         html += `<button class="btn ${i === pg.page ? 'btn-primary' : 'btn-ghost'} btn-sm"
-          onclick="changePage(${i})">${i}</button>`;
+          data-action="changePage" data-page="${i}">${i}</button>`;
       }
       container.innerHTML = html;
     }
@@ -250,6 +250,11 @@
 
     // Reset filters
     document.getElementById('resetFilters').addEventListener('click', resetAll);
+
+    registerActions({
+      addToCart:  (data) => addToCart(data.id, data.name),
+      changePage: (data) => changePage(Number(data.page))
+    });
 
     document.addEventListener('DOMContentLoaded', () => {
       loadCategoryPills();

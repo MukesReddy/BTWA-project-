@@ -129,17 +129,17 @@
             <tbody>
               ${foods.map(f => `
                 <tr>
-                  <td><img src="${f.image}" alt="${f.name}" style="width:50px;height:50px;border-radius:var(--radius);object-fit:cover" loading="lazy"/></td>
-                  <td style="font-weight:600;max-width:150px">${f.name}</td>
-                  <td>${f.category?.name || 'N/A'}</td>
-                  <td style="color:var(--primary);font-weight:700">₹${f.price}</td>
-                  <td>⭐ ${f.rating}</td>
+                  <td><img src="${esc(f.image)}" alt="${esc(f.name)}" style="width:50px;height:50px;border-radius:var(--radius);object-fit:cover" loading="lazy"/></td>
+                  <td style="font-weight:600;max-width:150px">${esc(f.name)}</td>
+                  <td>${esc(f.category?.name || 'N/A')}</td>
+                  <td style="color:var(--primary);font-weight:700">₹${esc(f.price)}</td>
+                  <td>⭐ ${esc(f.rating)}</td>
                   <td>${f.available
                     ? '<span class="badge badge-confirmed">✓ Yes</span>'
                     : '<span class="badge badge-cancelled">✗ No</span>'}</td>
                   <td style="display:flex;gap:.4rem">
-                    <button class="btn btn-ghost btn-sm" onclick="editFood('${f._id}')">✏️ Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteFood('${f._id}','${f.name}')">🗑️</button>
+                    <button class="btn btn-ghost btn-sm" data-action="editFood" data-id="${esc(f._id)}">✏️ Edit</button>
+                    <button class="btn btn-danger btn-sm" data-action="deleteFood" data-id="${esc(f._id)}" data-name="${esc(f.name)}">🗑️</button>
                   </td>
                 </tr>`).join('')}
             </tbody>
@@ -161,14 +161,14 @@
       editingFoodId = id;
       document.getElementById('modalTitle').textContent = 'Edit Food';
       document.getElementById('foodModal').classList.remove('hidden');
-      const { ok, data } = await apiCall('GET', `/foods/${id}`);
+      const { ok, data } = await apiCall('GET', `/foods/${encodeURIComponent(id)}`);
       if (!ok) return;
       const f = data.data;
       document.getElementById('fName').value        = f.name;
-      document.getElementById('fDesc').value        = f.description;
+      document.getElementById('fDesc').value        = f.description || '';
       document.getElementById('fPrice').value       = f.price;
       document.getElementById('fRating').value      = f.rating;
-      document.getElementById('fImage').value       = f.image;
+      document.getElementById('fImage').value       = f.image || '';
       document.getElementById('fIngredients').value = f.ingredients?.join(', ') || '';
       document.getElementById('fAvailable').checked = f.available;
       populateCategorySelect(f.category?._id || f.category);
@@ -177,7 +177,7 @@
     function populateCategorySelect(selectedId = '') {
       const sel = document.getElementById('fCategory');
       sel.innerHTML = '<option value="">Select category…</option>' +
-        categories.map(c => `<option value="${c._id}" ${c._id === selectedId ? 'selected' : ''}>${c.name}</option>`).join('');
+        categories.map(c => `<option value="${esc(c._id)}" ${c._id === selectedId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
     }
 
     async function saveFood() {
@@ -190,10 +190,18 @@
         return;
       }
 
+      // Empty rating → let the server apply its default (4.0). A rating of 0 is kept.
+      const ratingRaw = document.getElementById('fRating').value.trim();
+      const rating = ratingRaw === '' ? undefined : Number(ratingRaw);
+      if (rating !== undefined && Number.isNaN(rating)) {
+        document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">Rating must be a number between 0 and 5</div>';
+        return;
+      }
+
       const body = {
         name, price: Number(price), category,
         description: document.getElementById('fDesc').value.trim(),
-        rating: Number(document.getElementById('fRating').value) || 4.0,
+        rating,
         image: document.getElementById('fImage').value.trim() || undefined,
         ingredients: document.getElementById('fIngredients').value.split(',').map(s=>s.trim()).filter(Boolean),
         available: document.getElementById('fAvailable').checked,
@@ -203,7 +211,7 @@
       btn.disabled = true; btn.textContent = 'Saving…';
 
       const method   = editingFoodId ? 'PUT' : 'POST';
-      const endpoint = editingFoodId ? `/foods/${editingFoodId}` : '/foods';
+      const endpoint = editingFoodId ? `/foods/${encodeURIComponent(editingFoodId)}` : '/foods';
       const { ok, data } = await apiCall(method, endpoint, body);
 
       btn.disabled = false; btn.textContent = 'Save Food';
@@ -213,13 +221,13 @@
         closeModal();
         loadFoods();
       } else {
-        document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${data.message}</div>`;
+        document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${esc(data.message)}</div>`;
       }
     }
 
     async function deleteFood(id, name) {
       if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-      const { ok, data } = await apiCall('DELETE', `/foods/${id}`);
+      const { ok, data } = await apiCall('DELETE', `/foods/${encodeURIComponent(id)}`);
       if (ok) { showToast(`${name} deleted`, 'success'); loadFoods(); }
       else showAlert('alertBox', data.message, 'error');
     }
@@ -231,6 +239,11 @@
 
     document.getElementById('foodModal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) closeModal();
+    });
+
+    registerActions({
+      editFood:   (data) => editFood(data.id),
+      deleteFood: (data) => deleteFood(data.id, data.name)
     });
 
     document.addEventListener('DOMContentLoaded', loadFoods);

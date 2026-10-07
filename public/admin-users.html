@@ -81,15 +81,15 @@
         <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Address</th><th>Joined</th><th>Action</th></tr></thead>
         <tbody>
           ${users.map(u => `<tr>
-            <td style="font-weight:600">${u.name}</td>
-            <td style="font-size:.9rem">${u.email}</td>
-            <td style="font-size:.9rem;color:var(--text-secondary)">${u.phone || '—'}</td>
-            <td><span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-customer'}">${u.role}</span></td>
-            <td style="font-size:.8rem;color:var(--text-muted)">${u.address?.city ? `${u.address.city}, ${u.address.state}` : '—'}</td>
+            <td style="font-weight:600">${esc(u.name)}${u.isActive === false ? ' <span class="badge badge-cancelled" title="Account deactivated — order history kept">Deactivated</span>' : ''}</td>
+            <td style="font-size:.9rem">${esc(u.email)}</td>
+            <td style="font-size:.9rem;color:var(--text-secondary)">${esc(u.phone || '—')}</td>
+            <td><span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-customer'}">${esc(u.role)}</span></td>
+            <td style="font-size:.8rem;color:var(--text-muted)">${u.address?.city ? `${esc(u.address.city)}, ${esc(u.address.state)}` : '—'}</td>
             <td style="font-size:.8rem;color:var(--text-muted)">${formatDate(u.createdAt)}</td>
             <td>
               ${u._id !== adminId
-                ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u._id}','${u.name}')">🗑️</button>`
+                ? `<button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${esc(u._id)}" data-name="${esc(u.name)}" title="Delete / deactivate user">🗑️</button>`
                 : '<span style="font-size:.8rem;color:var(--text-muted)">You</span>'}
             </td>
           </tr>`).join('')}
@@ -98,9 +98,9 @@
     }
 
     async function deleteUser(id, name) {
-      if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
-      const { ok, data } = await apiCall('DELETE', `/admin/users/${id}`);
-      if (ok) { showToast(`${name} deleted`, 'success'); loadUsers(); }
+      if (!confirm(`Remove user "${name}"?\n\nUsers who have placed orders are deactivated (so order history is kept); users without orders are deleted.`)) return;
+      const { ok, data } = await apiCall('DELETE', `/admin/users/${encodeURIComponent(id)}`);
+      if (ok) { showToast(data.message || 'User removed', 'success'); loadUsers(); }
       else showAlert('alertBox', data.message, 'error');
     }
 
@@ -111,6 +111,10 @@
       searchTimer = setTimeout(loadUsers, 400);
     });
     document.getElementById('roleFilter').addEventListener('change', loadUsers);
+
+    registerActions({
+      deleteUser: (data) => deleteUser(data.id, data.name)
+    });
 
     document.addEventListener('DOMContentLoaded', loadUsers);
   </script>

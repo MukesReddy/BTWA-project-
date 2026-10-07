@@ -74,10 +74,9 @@ const getOrderById = async (req, res, next) => {
     }
 
     // Authorization: customer can only see their own orders
-    if (
-      req.session.role !== "admin" &&
-      order.user._id.toString() !== req.session.userId
-    ) {
+    // order.user can be null if the owner no longer exists, so read the id safely
+    const ownerId = order.user ? order.user._id.toString() : null;
+    if (req.session.role !== "admin" && ownerId !== req.session.userId) {
       return sendError(res, 403, "You are not authorized to view this order");
     }
 

@@ -37,7 +37,15 @@ const userRoutes = require("./routes/userRoutes");
 // ─── Connect to MongoDB ───────────────────────────────────────────────────────
 // BTWA Module 1: MongoDB connection
 // BTWA Module 4: Async database connection
-connectDB();
+// Only when run directly (node server.js). Tests import the app without a DB
+// connection and attach their own (see tests/helpers).
+if (require.main === module) {
+  connectDB();
+}
+
+// Tests set NODE_ENV=test: no log files / console noise, and an in-memory session store
+// instead of connect-mongo (which would open its own MongoDB connection on import).
+const isTest = process.env.NODE_ENV === "test";
 
 // ─── Initialize Express App ───────────────────────────────────────────────────
 const app = express();
@@ -67,12 +75,14 @@ app.use(
 // BTWA Module 9: Morgan middleware
 // 'combined' format logged to file via fs.createWriteStream (BTWA Module 4: filesystem streams)
 // 'dev' format logged to console for development
-const accessLogStream = fs.createWriteStream(
-  path.join(__dirname, "logs", "access.log"),
-  { flags: "a" }  // append mode — do not truncate on restart
-);
-app.use(morgan("combined", { stream: accessLogStream })); // Persistent HTTP access log
-app.use(morgan("dev"));                                   // Console log for development
+if (!isTest) {
+  const accessLogStream = fs.createWriteStream(
+    path.join(__dirname, "logs", "access.log"),
+    { flags: "a" }  // append mode — do not truncate on restart
+  );
+  app.use(morgan("combined", { stream: accessLogStream })); // Persistent HTTP access log
+  app.use(morgan("dev"));                                   // Console log for development
+}
 
 // 4. Body parsers — parse JSON and URL-encoded request bodies
 // BTWA Module 7: Express built-in middleware
@@ -87,10 +97,12 @@ app.use(
     secret: process.env.SESSION_SECRET || "fallback_secret",
     resave: false,            // Don't save session if unmodified
     saveUninitialized: false, // Don't create session until something stored
-    store: new MongoStore({
-      mongoUrl: process.env.MONGO_URI,
-      touchAfter: 24 * 3600, // Lazy session update (only update once per 24h)
-    }),
+    store: isTest
+      ? undefined // express-session's default MemoryStore (tests only)
+      : new MongoStore({
+          mongoUrl: process.env.MONGO_URI,
+          touchAfter: 24 * 3600, // Lazy session update (only update once per 24h)
+        }),
     cookie: {
       secure: process.env.NODE_ENV === "production", // HTTPS only in production
       httpOnly: true,  // Prevent client-side JS access (security)
@@ -134,12 +146,14 @@ app.use(errorHandler);  // Global error handler
 // ─── Start Server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  // Log server start to file (BTWA Module 4: Filesystem operations)
-  logger.info(`SERVER STARTED on port ${PORT} | Environment: ${process.env.NODE_ENV}`);
-  console.log(`\n🚀 FoodieHub Server running at http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV}\n`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    // Log server start to file (BTWA Module 4: Filesystem operations)
+    logger.info(`SERVER STARTED on port ${PORT} | Environment: ${process.env.NODE_ENV}`);
+    console.log(`\n🚀 FoodieHub Server running at http://localhost:${PORT}`);
+    console.log(`📋 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV}\n`);
+  });
+}
 
 module.exports = app; // Export for testing

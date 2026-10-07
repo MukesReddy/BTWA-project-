@@ -168,17 +168,17 @@
       }
       container.innerHTML = `<div class="category-strip">
         ${cats.map(c => `
-          <a href="/menu.html?category=${c._id}" class="cat-card">
+          <a href="/menu.html?category=${esc(c._id)}" class="cat-card">
             <img class="cat-card-img"
-              src="${c.image || ''}"
-              alt="${c.name}"
+              src="${esc(c.image || '')}"
+              alt="${esc(c.name)}"
               loading="lazy"
               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
             />
             <span style="display:none;width:68px;height:68px;border-radius:50%;background:var(--bg-card2);
               border:2px solid var(--border);align-items:center;justify-content:center;
-              font-size:1.8rem;flex-shrink:0">${catEmoji(c.name)}</span>
-            <span class="cat-card-name">${c.name}</span>
+              font-size:1.8rem;flex-shrink:0">${catEmoji(String(c.name))}</span>
+            <span class="cat-card-name">${esc(c.name)}</span>
           </a>
         `).join('')}
       </div>`;
@@ -209,26 +209,26 @@
         <div class="food-card">
           <div class="food-card-img-wrapper">
             ${f.image
-              ? `<img class="food-card-img" src="${f.image}" alt="${f.name}" loading="lazy" onerror="${imgFallback}" />`
+              ? `<img class="food-card-img" src="${esc(f.image)}" alt="${esc(f.name)}" loading="lazy" onerror="${imgFallback}" />`
               : ''
             }
             <div class="food-card-img-placeholder" style="display:${f.image ? 'none' : 'flex'}">
               <span class="ph-icon">🍽️</span>
-              <span>${f.category?.name || 'Food'}</span>
+              <span>${esc(f.category?.name || 'Food')}</span>
             </div>
-            <span class="food-card-badge">${f.category?.name || 'Food'}</span>
+            <span class="food-card-badge">${esc(f.category?.name || 'Food')}</span>
             ${!f.available ? '<span class="unavailable-badge">Unavailable</span>' : ''}
           </div>
           <div class="food-card-body">
-            <div class="food-card-category">${f.category?.name || ''}</div>
-            <h3 class="food-card-name">${f.name}</h3>
-            <p class="food-card-desc">${f.description || ''}</p>
+            <div class="food-card-category">${esc(f.category?.name || '')}</div>
+            <h3 class="food-card-name">${esc(f.name)}</h3>
+            <p class="food-card-desc">${esc(f.description || '')}</p>
             <div class="food-card-footer">
-              <span class="food-price">₹${f.price}</span>
-              <span class="food-rating">⭐ ${f.rating}</span>
+              <span class="food-price">₹${esc(f.price)}</span>
+              <span class="food-rating">⭐ ${esc(f.rating)}</span>
             </div>
             ${f.available
-              ? `<button class="btn btn-primary btn-full btn-sm" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+              ? `<button class="btn btn-primary btn-full btn-sm" data-action="addToCart" data-id="${esc(f._id)}" data-name="${esc(f.name)}">🛒 Add to Cart</button>`
               : `<button class="btn btn-ghost btn-full btn-sm" disabled>Currently Unavailable</button>`
             }
           </div>
@@ -249,6 +249,10 @@
         showToast(data.message || 'Error adding to cart', 'error');
       }
     }
+
+    registerActions({
+      addToCart: (data) => addToCart(data.id, data.name)
+    });
 
     document.addEventListener('DOMContentLoaded', () => {
       loadCategories();

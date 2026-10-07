@@ -90,13 +90,13 @@
         <thead><tr><th>Image</th><th>Name</th><th>Description</th><th>Created</th><th>Actions</th></tr></thead>
         <tbody>
           ${cats.map(c => `<tr>
-            <td><img src="${c.image}" alt="${c.name}" style="width:50px;height:50px;border-radius:50%;object-fit:cover" loading="lazy"/></td>
-            <td style="font-weight:700">${c.name}</td>
-            <td style="color:var(--text-secondary);font-size:.9rem;max-width:200px">${c.description || '—'}</td>
+            <td><img src="${esc(c.image)}" alt="${esc(c.name)}" style="width:50px;height:50px;border-radius:50%;object-fit:cover" loading="lazy"/></td>
+            <td style="font-weight:700">${esc(c.name)}</td>
+            <td style="color:var(--text-secondary);font-size:.9rem;max-width:200px">${esc(c.description || '—')}</td>
             <td style="font-size:.85rem;color:var(--text-muted)">${formatDate(c.createdAt)}</td>
             <td style="display:flex;gap:.4rem">
-              <button class="btn btn-ghost btn-sm" onclick="editCat('${c._id}','${c.name}','${c.description || ''}','${c.image || ''}')">✏️ Edit</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteCat('${c._id}','${c.name}')">🗑️</button>
+              <button class="btn btn-ghost btn-sm" data-action="editCat" data-id="${esc(c._id)}" data-name="${esc(c.name)}" data-desc="${esc(c.description || '')}" data-img="${esc(c.image || '')}">✏️ Edit</button>
+              <button class="btn btn-danger btn-sm" data-action="deleteCat" data-id="${esc(c._id)}" data-name="${esc(c.name)}">🗑️</button>
             </td>
           </tr>`).join('')}
         </tbody></table></div>`;
@@ -124,16 +124,16 @@
       };
 
       const method   = editingId ? 'PUT' : 'POST';
-      const endpoint = editingId ? `/categories/${editingId}` : '/categories';
+      const endpoint = editingId ? `/categories/${encodeURIComponent(editingId)}` : '/categories';
       const { ok, data } = await apiCall(method, endpoint, body);
 
       if (ok) { showToast(editingId ? 'Category updated!' : 'Category added!', 'success'); closeModal(); loadCategories(); }
-      else document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${data.message}</div>`;
+      else document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">${esc(data.message)}</div>`;
     }
 
     async function deleteCat(id, name) {
       if (!confirm(`Delete category "${name}"?`)) return;
-      const { ok, data } = await apiCall('DELETE', `/categories/${id}`);
+      const { ok, data } = await apiCall('DELETE', `/categories/${encodeURIComponent(id)}`);
       if (ok) { showToast(`${name} deleted`, 'success'); loadCategories(); }
       else showAlert('alertBox', data.message, 'error');
     }
@@ -142,6 +142,11 @@
       document.getElementById('catModal').classList.add('hidden');
       document.getElementById('modalAlert').innerHTML = '';
     }
+
+    registerActions({
+      editCat:   (data) => editCat(data.id, data.name, data.desc, data.img),
+      deleteCat: (data) => deleteCat(data.id, data.name)
+    });
 
     document.addEventListener('DOMContentLoaded', loadCategories);
   </script>

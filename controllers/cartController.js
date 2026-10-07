@@ -1,11 +1,105 @@
 // controllers/cartController.js
 // Cart management controller
-// BTWA Module 2: Array operations in MongoDB, update operators
+// BTWA Module 2: Array operations in MongoDB, update operators ($inc, $push, $pull, positional $)
 // BTWA Module 3: Mongoose populate
+//
+// Concurrency note: every cart change is ONE atomic MongoDB update operation
+// (never "read the cart → change it in JS → save()"), so two requests arriving
+// at the same time cannot overwrite each other or create two carts.
 
+const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Food = require("../models/Food");
 const { sendSuccess, sendError } = require("../utils/helpers");
+const { MAX_CART_QUANTITY } = require("../utils/constants");
+
+const MAX_ATTEMPTS = 3;
+
+/**
+ * buildCartResponse
+ * Turns a Cart document into the API response shape
+ *   { ...cart, items: [{ food:{_id,name,image,price,available}, quantity, price }], total }
+ *
+ * - Prices come from the CURRENT Food document, so the cart total always matches
+ *   what checkout will charge (a stored price snapshot could be stale).
+ * - Lines whose food no longer exists are dropped from the response and pruned
+ *   from the database (self-healing).
+ * BTWA Module 3: selective fields (select) + $in query
+ */
+const buildCartResponse = async (cart) => {
+  const ids = cart.items.map((item) => item.food);
+  const foods = await Food.find({ _id: { $in: ids } })
+    .select("name image price available")
+    .lean();
+  const foodMap = new Map(foods.map((f) => [f._id.toString(), f]));
+
+  const items = [];
+  const staleIds = [];
+  for (const item of cart.items) {
+    const food = foodMap.get(item.food.toString());
+    if (!food) {
+      staleIds.push(item.food);
+      continue;
+    }
+    items.push({ food, quantity: item.quantity, price: food.price });
+  }
+
+  if (staleIds.length) {
+    await Cart.updateOne({ _id: cart._id }, { $pull: { items: { food: { $in: staleIds } } } });
+  }
+
+  const total =
+    Math.round(items.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100) / 100;
+
+  const base = typeof cart.toObject === "function" ? cart.toObject() : cart;
+  return { ...base, items, total };
+};
+
+/**
+ * addItemToCart
+ * Atomically adds `quantity` of a food to the user's cart.
+ * Returns "added" or "limit" (would exceed MAX_CART_QUANTITY for that item).
+ *
+ *  1. Line already in cart → $inc its quantity with the positional operator `$`.
+ *     The $elemMatch in the filter enforces the per-item maximum inside MongoDB.
+ *  2. Line in cart but the filter above failed → the limit would be exceeded.
+ *  3. No line yet → $push it (upsert creates the cart if the user has none).
+ *     If two requests race to create the cart, the unique index on `user` makes
+ *     the loser fail with E11000; we simply retry from step 1.
+ */
+const addItemToCart = async (userId, food, quantity) => {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // 1. increment existing line (BTWA Module 2: $inc + positional $ + $elemMatch)
+    const incremented = await Cart.updateOne(
+      {
+        user: userId,
+        items: { $elemMatch: { food: food._id, quantity: { $lte: MAX_CART_QUANTITY - quantity } } },
+      },
+      { $inc: { "items.$.quantity": quantity }, $set: { "items.$.price": food.price } }
+    );
+    if (incremented.matchedCount === 1) return "added";
+
+    // 2. line exists, so the only reason step 1 failed is the quantity cap
+    if (await Cart.exists({ user: userId, "items.food": food._id })) return "limit";
+
+    // 3. no line yet → push (BTWA Module 2: $push, upsert)
+    try {
+      await Cart.updateOne(
+        { user: userId, "items.food": { $ne: food._id } },
+        { $push: { items: { food: food._id, quantity, price: food.price } } },
+        { upsert: true, setDefaultsOnInsert: false }
+      );
+      return "added";
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      // Lost the race to create the cart (or to add this line) → try again
+    }
+  }
+
+  const err = new Error("Could not update your cart right now. Please try again.");
+  err.statusCode = 409;
+  throw err;
+};
 
 /**
  * @route   GET /api/cart
@@ -15,17 +109,13 @@ const { sendSuccess, sendError } = require("../utils/helpers");
  */
 const getCart = async (req, res, next) => {
   try {
-    const cart = await Cart.findOne({ user: req.session.userId })
-      .populate("items.food", "name image price available"); // BTWA Module 3: Selective populate
+    const cart = await Cart.findOne({ user: req.session.userId });
 
     if (!cart) {
       return sendSuccess(res, 200, "Cart is empty", { items: [], total: 0 });
     }
 
-    // Calculate cart total
-    const total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-    return sendSuccess(res, 200, "Cart retrieved", { ...cart.toObject(), total });
+    return sendSuccess(res, 200, "Cart retrieved", await buildCartResponse(cart));
   } catch (error) {
     next(error);
   }
@@ -35,11 +125,14 @@ const getCart = async (req, res, next) => {
  * @route   POST /api/cart
  * @desc    Add a food item to cart (or increment quantity if already present)
  * @access  Authenticated
- * BTWA Module 2: Array operations, findOne, save
+ * BTWA Module 2: Array operations, atomic update operators
  */
 const addToCart = async (req, res, next) => {
   try {
-    const { foodId, quantity = 1 } = req.body;
+    // foodId and quantity were validated (and quantity converted to an integer)
+    // by validateCartItem before reaching this point.
+    const { foodId } = req.body;
+    const quantity = Number(req.body.quantity);
 
     // Verify food exists and is available (BTWA Module 2: findById)
     const food = await Food.findById(foodId);
@@ -50,36 +143,17 @@ const addToCart = async (req, res, next) => {
       return sendError(res, 400, "This food item is currently unavailable");
     }
 
-    // Find or create cart for this user
-    let cart = await Cart.findOne({ user: req.session.userId });
-    if (!cart) {
-      cart = new Cart({ user: req.session.userId, items: [] });
+    const result = await addItemToCart(req.session.userId, food, quantity);
+    if (result === "limit") {
+      return sendError(
+        res,
+        400,
+        `You can order at most ${MAX_CART_QUANTITY} of one item`
+      );
     }
 
-    // Check if food is already in cart (BTWA Module 2: Array query)
-    const existingItemIndex = cart.items.findIndex(
-      (item) => item.food.toString() === foodId
-    );
-
-    if (existingItemIndex > -1) {
-      // Item exists — increment quantity
-      cart.items[existingItemIndex].quantity += parseInt(quantity);
-    } else {
-      // New item — push to items array (BTWA Module 2: Array push)
-      cart.items.push({
-        food: foodId,
-        quantity: parseInt(quantity),
-        price: food.price, // Store current price
-      });
-    }
-
-    await cart.save();
-
-    // Return populated cart
-    await cart.populate("items.food", "name image price available");
-    const total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-    return sendSuccess(res, 200, "Item added to cart", { ...cart.toObject(), total });
+    const cart = await Cart.findOne({ user: req.session.userId });
+    return sendSuccess(res, 200, "Item added to cart", await buildCartResponse(cart));
   } catch (error) {
     next(error);
   }
@@ -89,35 +163,24 @@ const addToCart = async (req, res, next) => {
  * @route   PUT /api/cart/:foodId
  * @desc    Update quantity of a cart item
  * @access  Authenticated
+ * BTWA Module 2: positional $ operator
  */
 const updateCartItem = async (req, res, next) => {
   try {
-    const { quantity } = req.body;
+    const quantity = Number(req.body.quantity); // validated: integer 1..MAX_CART_QUANTITY
     const { foodId } = req.params;
 
-    if (!quantity || quantity < 1) {
-      return sendError(res, 400, "Quantity must be at least 1");
-    }
-
-    const cart = await Cart.findOne({ user: req.session.userId });
-    if (!cart) {
-      return sendError(res, 404, "Cart not found");
-    }
-
-    // Find the item in cart (BTWA Module 2: Array element query)
-    const itemIndex = cart.items.findIndex((item) => item.food.toString() === foodId);
-    if (itemIndex === -1) {
+    // Atomic: matches the user's cart AND the line, then sets that line only.
+    const result = await Cart.updateOne(
+      { user: req.session.userId, "items.food": foodId },
+      { $set: { "items.$.quantity": quantity } }
+    );
+    if (result.matchedCount === 0) {
       return sendError(res, 404, "Item not found in cart");
     }
 
-    // Update quantity
-    cart.items[itemIndex].quantity = parseInt(quantity);
-    await cart.save();
-
-    await cart.populate("items.food", "name image price available");
-    const total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-    return sendSuccess(res, 200, "Cart updated", { ...cart.toObject(), total });
+    const cart = await Cart.findOne({ user: req.session.userId });
+    return sendSuccess(res, 200, "Cart updated", await buildCartResponse(cart));
   } catch (error) {
     next(error);
   }
@@ -133,7 +196,6 @@ const updateCartItem = async (req, res, next) => {
 const removeCartItem = async (req, res, next) => {
   try {
     const { foodId } = req.params;
-    const mongoose = require("mongoose");
 
     // $pull removes the matching element from the items array atomically in MongoDB
     // BTWA Module 2: $pull update operator
@@ -141,14 +203,13 @@ const removeCartItem = async (req, res, next) => {
       { user: req.session.userId },
       { $pull: { items: { food: new mongoose.Types.ObjectId(foodId) } } },
       { new: true } // Return the updated document
-    ).populate("items.food", "name image price available");
+    );
 
     if (!cart) {
       return sendError(res, 404, "Cart not found");
     }
 
-    const total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    return sendSuccess(res, 200, "Item removed from cart", { ...cart.toObject(), total });
+    return sendSuccess(res, 200, "Item removed from cart", await buildCartResponse(cart));
   } catch (error) {
     next(error);
   }
@@ -169,4 +230,4 @@ const clearCart = async (req, res, next) => {
   }
 };
 
-module.exports = { getCart, addToCart, updateCartItem, removeCartItem, clearCart };
+module.exports = { getCart, addToCart, updateCartItem, removeCartItem, clearCart, buildCartResponse };

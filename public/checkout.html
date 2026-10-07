@@ -57,21 +57,21 @@
               <div class="card-body">
                 <div class="form-group">
                   <label class="form-label">Street / Flat Number *</label>
-                  <input type="text" id="street" class="form-control" value="${addr.street || ''}" placeholder="123 Main Street, Flat 4B" required />
+                  <input type="text" id="street" class="form-control" value="${esc(addr.street || '')}" placeholder="123 Main Street, Flat 4B" required />
                 </div>
                 <div class="form-row">
                   <div class="form-group">
                     <label class="form-label">City *</label>
-                    <input type="text" id="city" class="form-control" value="${addr.city || ''}" placeholder="Mumbai" required />
+                    <input type="text" id="city" class="form-control" value="${esc(addr.city || '')}" placeholder="Mumbai" required />
                   </div>
                   <div class="form-group">
                     <label class="form-label">State *</label>
-                    <input type="text" id="state" class="form-control" value="${addr.state || ''}" placeholder="Maharashtra" required />
+                    <input type="text" id="state" class="form-control" value="${esc(addr.state || '')}" placeholder="Maharashtra" required />
                   </div>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Pincode *</label>
-                  <input type="text" id="pincode" class="form-control" value="${addr.pincode || ''}" placeholder="400001" required />
+                  <input type="text" id="pincode" class="form-control" value="${esc(addr.pincode || '')}" placeholder="400001" required />
                 </div>
               </div>
             </div>
@@ -98,8 +98,8 @@
               <div style="margin-bottom:1rem">
                 ${cart.items.map(item => `
                   <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;font-size:.9rem;border-bottom:1px solid var(--border)">
-                    <span>${item.food?.name || 'Item'} × ${item.quantity}</span>
-                    <span style="font-weight:600">₹${item.price * item.quantity}</span>
+                    <span>${esc(item.food?.name || 'Item')} × ${esc(item.quantity)}</span>
+                    <span style="font-weight:600">₹${esc(item.price * item.quantity)}</span>
                   </div>
                 `).join('')}
               </div>

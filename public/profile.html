@@ -30,23 +30,23 @@
         <div class="card" style="margin-bottom:1.5rem">
           <div class="card-header flex-between">
             <h3 style="font-weight:700">Personal Information</h3>
-            <span class="badge ${user.role === 'admin' ? 'badge-admin' : 'badge-customer'}">${user.role}</span>
+            <span class="badge ${user.role === 'admin' ? 'badge-admin' : 'badge-customer'}">${esc(user.role)}</span>
           </div>
           <div class="card-body">
             <form id="profileForm">
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">Full Name</label>
-                  <input type="text" id="name" class="form-control" value="${user.name}" required />
+                  <input type="text" id="name" class="form-control" value="${esc(user.name)}" required />
                 </div>
                 <div class="form-group">
                   <label class="form-label">Phone</label>
-                  <input type="tel" id="phone" class="form-control" value="${user.phone || ''}" placeholder="9876543210" />
+                  <input type="tel" id="phone" class="form-control" value="${esc(user.phone || '')}" placeholder="9876543210" />
                 </div>
               </div>
               <div class="form-group">
                 <label class="form-label">Email (cannot be changed)</label>
-                <input type="email" class="form-control" value="${user.email}" disabled style="opacity:.6;cursor:not-allowed" />
+                <input type="email" class="form-control" value="${esc(user.email)}" disabled style="opacity:.6;cursor:not-allowed" />
               </div>
               <button type="submit" class="btn btn-primary" id="saveBtn">💾 Save Changes</button>
             </form>
@@ -61,21 +61,21 @@
             <form id="addressForm">
               <div class="form-group">
                 <label class="form-label">Street</label>
-                <input type="text" id="street" class="form-control" value="${addr.street || ''}" placeholder="123 Main Street" />
+                <input type="text" id="street" class="form-control" value="${esc(addr.street || '')}" placeholder="123 Main Street" />
               </div>
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">City</label>
-                  <input type="text" id="city" class="form-control" value="${addr.city || ''}" placeholder="Mumbai" />
+                  <input type="text" id="city" class="form-control" value="${esc(addr.city || '')}" placeholder="Mumbai" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">State</label>
-                  <input type="text" id="state" class="form-control" value="${addr.state || ''}" placeholder="Maharashtra" />
+                  <input type="text" id="state" class="form-control" value="${esc(addr.state || '')}" placeholder="Maharashtra" />
                 </div>
               </div>
               <div class="form-group">
                 <label class="form-label">Pincode</label>
-                <input type="text" id="pincode" class="form-control" value="${addr.pincode || ''}" placeholder="400001" />
+                <input type="text" id="pincode" class="form-control" value="${esc(addr.pincode || '')}" placeholder="400001" />
               </div>
               <button type="submit" class="btn btn-primary" id="saveAddrBtn">💾 Save Address</button>
             </form>
@@ -94,7 +94,7 @@
 
         const { ok, data } = await apiCall('PUT', '/users/profile', {
           name: document.getElementById('name').value.trim(),
-          phone: document.getElementById('phone').value.trim() || undefined,
+          phone: document.getElementById('phone').value.trim(), // '' clears the phone number
         });
 
         btn.disabled = false; btn.innerHTML = '💾 Save Changes';

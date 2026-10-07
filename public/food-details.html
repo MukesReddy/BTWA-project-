@@ -24,7 +24,7 @@
       const id = new URLSearchParams(window.location.search).get('id');
       if (!id) { window.location.href = '/menu.html'; return; }
 
-      const { ok, data } = await apiCall('GET', `/foods/${id}`);
+      const { ok, data } = await apiCall('GET', `/foods/${encodeURIComponent(id)}`);
       const content = document.getElementById('content');
 
       if (!ok) {
@@ -38,26 +38,26 @@
       content.innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:start">
           <div>
-            <img src="${f.image}" alt="${f.name}" style="width:100%;border-radius:var(--radius-xl);box-shadow:var(--shadow);max-height:450px;object-fit:cover" />
+            <img src="${esc(f.image)}" alt="${esc(f.name)}" style="width:100%;border-radius:var(--radius-xl);box-shadow:var(--shadow);max-height:450px;object-fit:cover" />
           </div>
           <div>
             <div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
-              <span class="badge badge-customer">${f.category?.name || 'Food'}</span>
+              <span class="badge badge-customer">${esc(f.category?.name || 'Food')}</span>
               ${f.available
                 ? '<span class="badge badge-confirmed">✓ Available</span>'
                 : '<span class="badge badge-cancelled">✗ Unavailable</span>'}
             </div>
-            <h1 style="font-size:2rem;font-weight:800;margin-bottom:.75rem">${f.name}</h1>
-            <p style="color:var(--text-secondary);font-size:1rem;line-height:1.7;margin-bottom:1.5rem">${f.description}</p>
+            <h1 style="font-size:2rem;font-weight:800;margin-bottom:.75rem">${esc(f.name)}</h1>
+            <p style="color:var(--text-secondary);font-size:1rem;line-height:1.7;margin-bottom:1.5rem">${esc(f.description)}</p>
 
             <div style="display:flex;gap:2rem;margin-bottom:1.5rem">
               <div>
                 <div style="font-size:.8rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Price</div>
-                <div style="font-size:2.5rem;font-weight:800;color:var(--primary)">₹${f.price}</div>
+                <div style="font-size:2.5rem;font-weight:800;color:var(--primary)">₹${esc(f.price)}</div>
               </div>
               <div>
                 <div style="font-size:.8rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Rating</div>
-                <div style="font-size:2rem;font-weight:800;color:var(--accent)">⭐ ${f.rating}</div>
+                <div style="font-size:2rem;font-weight:800;color:var(--accent)">⭐ ${esc(f.rating)}</div>
               </div>
             </div>
 
@@ -65,7 +65,7 @@
               <div style="margin-bottom:1.5rem">
                 <div style="font-size:.85rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">Ingredients</div>
                 <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-                  ${f.ingredients.map(i => `<span style="background:var(--bg-glass);border:1px solid var(--border);border-radius:20px;padding:.2rem .6rem;font-size:.8rem;color:var(--text-secondary)">${i}</span>`).join('')}
+                  ${f.ingredients.map(i => `<span style="background:var(--bg-glass);border:1px solid var(--border);border-radius:20px;padding:.2rem .6rem;font-size:.8rem;color:var(--text-secondary)">${esc(i)}</span>`).join('')}
                 </div>
               </div>` : ''}
 
@@ -82,7 +82,7 @@
             <div id="alertBox" style="margin-bottom:1rem"></div>
 
             ${f.available
-              ? `<button class="btn btn-primary btn-lg btn-full" id="addCartBtn" onclick="addToCart('${f._id}','${f.name}')">🛒 Add to Cart</button>`
+              ? `<button class="btn btn-primary btn-lg btn-full" id="addCartBtn" data-action="addToCart" data-id="${esc(f._id)}" data-name="${esc(f.name)}">🛒 Add to Cart</button>`
               : `<button class="btn btn-ghost btn-lg btn-full" disabled>Currently Unavailable</button>`
             }
             <a href="/menu.html" class="btn btn-outline btn-full" style="margin-top:.75rem">← Continue Shopping</a>
@@ -97,7 +97,7 @@
       window.addToCart = async (foodId, name) => {
         const { ok, data, status } = await apiCall('POST', '/cart', { foodId, quantity: qty });
         if (status === 401) {
-          showAlert('alertBox', 'Please <a href="/login.html">log in</a> to add items to cart', 'error');
+          showAlert('alertBox', 'Please <a href="/login.html">log in</a> to add items to cart', 'error', { html: true }); // trusted, hard-coded markup
           return;
         }
         if (ok) {
@@ -108,6 +108,10 @@
         }
       };
     }
+
+    registerActions({
+      addToCart: (data) => window.addToCart(data.id, data.name)
+    });
 
     document.addEventListener('DOMContentLoaded', loadFood);
   </script>

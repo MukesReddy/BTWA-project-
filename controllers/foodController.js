@@ -5,6 +5,7 @@
 // BTWA Module 8: REST API
 
 const Food = require("../models/Food");
+const Cart = require("../models/Cart");
 const { sendSuccess, sendError } = require("../utils/helpers");
 
 /**
@@ -136,7 +137,7 @@ const createFood = async (req, res, next) => {
       name, description, price, category, image,
       ingredients: ingredients || [],
       available: available !== undefined ? available : true,
-      rating: rating || 4.0,
+      rating: rating ?? 4.0, // ?? (not ||) so an explicit rating of 0 is kept
     });
 
     // Populate category for response
@@ -186,6 +187,12 @@ const deleteFood = async (req, res, next) => {
     if (!food) {
       return sendError(res, 404, "Food item not found");
     }
+
+    // Referential integrity: remove the deleted food from every customer's cart
+    // so checkout can never meet a dangling reference. ($pull = BTWA Module 2)
+    // Past orders are untouched — they keep their own foodName/price snapshot.
+    await Cart.updateMany({ "items.food": food._id }, { $pull: { items: { food: food._id } } });
+
     return sendSuccess(res, 200, "Food item deleted successfully");
   } catch (error) {
     next(error);

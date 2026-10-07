@@ -4,6 +4,7 @@
 // BTWA Module 2: Embedded documents, array of items
 
 const mongoose = require("mongoose");
+const { MAX_CART_QUANTITY } = require("../utils/constants");
 
 /**
  * Cart Item sub-schema (embedded document)
@@ -21,6 +22,11 @@ const cartItemSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: [1, "Quantity must be at least 1"],
+      max: [MAX_CART_QUANTITY, `Quantity cannot exceed ${MAX_CART_QUANTITY}`],
+      validate: {
+        validator: Number.isInteger,
+        message: "Quantity must be a whole number",
+      },
       default: 1,
     },
     price: {
@@ -52,7 +58,9 @@ const cartSchema = new mongoose.Schema(
   }
 );
 
-// Note: user index is auto-created by unique:true above
+// Note: user index is auto-created by unique:true above.
+// That unique index is also what makes concurrent "create cart" requests safe:
+// the second insert fails with E11000 and the controller retries (see cartController).
 
 const Cart = mongoose.model("Cart", cartSchema);
 module.exports = Cart;

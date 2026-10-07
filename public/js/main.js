@@ -3,6 +3,31 @@
 
 const API_BASE = '/api';
 
+/* ── HTML escaping (XSS defence) ────────────────────────────
+   Everything that comes from the API (names, descriptions, addresses…)
+   is untrusted text. Always pass it through esc() before putting it
+   inside an innerHTML template. Prefer textContent when possible.      */
+function escapeHtml(value) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => map[ch]);
+}
+const esc = escapeHtml;
+
+/* ── Event delegation for data-action buttons ───────────────
+   Replaces inline onclick="fn('${name}')" handlers. Values travel in
+   data-* attributes (escaped with esc()), so a quote or <script> in a
+   food name can never break out of the attribute or run as code.
+   Usage:  <button data-action="addToCart" data-id="..." data-name="...">
+           registerActions({ addToCart: (data) => addToCart(data.id, data.name) }); */
+function registerActions(handlers) {
+  document.addEventListener('click', (event) => {
+    const el = event.target.closest('[data-action]');
+    if (!el) return;
+    const handler = handlers[el.dataset.action];
+    if (typeof handler === 'function') handler(el.dataset, el, event);
+  });
+}
+
 /* ── API Helper ─────────────────────────────────────────── */
 async function apiCall(method, endpoint, body = null) {
   const opts = {
@@ -13,7 +38,12 @@ async function apiCall(method, endpoint, body = null) {
   if (body) opts.body = JSON.stringify(body);
 
   const res = await fetch(API_BASE + endpoint, opts);
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    data = { success: false, message: 'Unexpected response from the server' };
+  }
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -48,10 +78,13 @@ function showToast(message, type = 'success') {
     box-shadow: 0 8px 30px rgba(0,0,0,0.4); max-width: 340px;
     animation: slideInRight 0.3s ease;
   `;
-  toast.innerHTML = `
-    <span style="font-size:1.1rem">${icons[type]}</span>
-    <span>${message}</span>
-  `;
+  // textContent (never innerHTML): toast messages can contain user data such as food names
+  const iconEl = document.createElement('span');
+  iconEl.style.fontSize = '1.1rem';
+  iconEl.textContent = icons[type] || icons.info;
+  const textEl = document.createElement('span');
+  textEl.textContent = message;
+  toast.append(iconEl, textEl);
 
   const style = document.createElement('style');
   style.textContent = `
@@ -70,10 +103,13 @@ function showToast(message, type = 'success') {
 }
 
 /* ── Alert in container ─────────────────────────────────── */
-function showAlert(containerId, message, type = 'error') {
+// The message is escaped by default. Pass { html: true } ONLY for trusted,
+// hard-coded markup (e.g. a login link) — never for server or user text.
+function showAlert(containerId, message, type = 'error', options = {}) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  el.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+  const content = options.html ? message : escapeHtml(message);
+  el.innerHTML = `<div class="alert alert-${type}">${content}</div>`;
   el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -107,7 +143,7 @@ function statusBadge(status) {
     'Delivered':       'badge-delivered',
     'Cancelled':       'badge-cancelled',
   };
-  return `<span class="badge ${map[status] || 'badge-pending'}">${status}</span>`;
+  return `<span class="badge ${map[status] || 'badge-pending'}">${esc(status)}</span>`;
 }
 
 /* ── Format Currency ────────────────────────────────────── */
@@ -151,7 +187,7 @@ async function renderNavbar() {
         </a>
         <div style="position:relative">
           <button class="btn btn-ghost btn-sm" id="userMenuBtn" style="gap:.4rem">
-            👤 ${user.name.split(' ')[0]}
+            👤 ${esc(user.name.split(' ')[0])}
           </button>
           <div id="userDropdown" class="hidden" style="
             position:absolute;right:0;top:calc(100% + 8px);
