@@ -6,9 +6,16 @@
 const express = require("express");
 const router = express.Router();
 
-const { register, login, logout, getMe } = require("../controllers/authController");
+const { register, login, logout, getMe, getDemoAccounts } = require("../controllers/authController");
+const { getCsrfToken } = require("../middleware/csrfMiddleware");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { validateRegister, validateLogin } = require("../middleware/validationMiddleware");
+
+// GET /api/auth/csrf — public: issues the CSRF token every write request must send back (P1.5)
+router.get("/csrf", getCsrfToken);
+
+// GET /api/auth/demo-accounts — public, 404 unless demo login is enabled (development only by default)
+router.get("/demo-accounts", getDemoAccounts);
 
 // POST /api/auth/register — public
 router.post("/register", validateRegister, register);

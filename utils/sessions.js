@@ -11,7 +11,7 @@ const logger = require("./logger");
  * deactivated account is logged out everywhere immediately.
  *
  * connect-mongo (default options) stores each session as a JSON *string* in
- * the `session` field, e.g. {"cookie":{...},"userId":"<id>","userRole":"customer"}.
+ * the `session` field, e.g. {"cookie":{...},"userId":"<id>","role":"customer"}.
  * We therefore match on the stringified `"userId":"<id>"` fragment.
  * The id is validated as a 24-hex ObjectId first, so it can never inject
  * regex metacharacters.

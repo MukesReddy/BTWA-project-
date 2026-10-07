@@ -2,10 +2,24 @@
 // Authentication controller — register, login, logout, me
 // BTWA Module 10: Cookies, sessions, bcrypt authentication
 
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const { sendSuccess, sendError, sanitizeUser } = require("../utils/helpers");
 const logger = require("../utils/logger");
 const emitter = require("../utils/eventEmitter");
+const demoAccounts = require("../utils/demoAccounts");
+
+// Compared against when the email is unknown, so "no such user" and "wrong password" take the
+// same time (otherwise response time reveals which emails are registered). Built once, lazily.
+let dummyHash;
+const getDummyHash = () => {
+  if (!dummyHash) dummyHash = bcrypt.hash("not-a-real-password", 10);
+  return dummyHash;
+};
+
+/** Promise wrapper around req.session.regenerate (issues a brand-new session id). */
+const regenerateSession = (req) =>
+  new Promise((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
 
 /**
  * @route   POST /api/auth/register
@@ -52,6 +66,7 @@ const login = async (req, res, next) => {
     // BTWA Module 2: Query with projection
     const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
     if (!user) {
+      await bcrypt.compare(password, await getDummyHash()); // equalise timing with the "wrong password" path
       return sendError(res, 401, "Invalid email or password");
     }
 
@@ -66,6 +81,10 @@ const login = async (req, res, next) => {
     if (user.isActive === false) {
       return sendError(res, 403, "This account has been deactivated. Please contact support.");
     }
+
+    // Session fixation defence: swap the pre-login session id for a fresh one. Anything an
+    // attacker planted in (or learned about) the old session — id, CSRF token — is now useless.
+    await regenerateSession(req);
 
     // Create session — store userId and role (BTWA Module 10: express-session)
     req.session.userId = user._id.toString();
@@ -105,8 +124,10 @@ const logout = (req, res, next) => {
       return next(err);
     }
 
-    // Clear the session cookie from browser (BTWA Module 10: Cookies)
-    res.clearCookie("foodiehub.sid");
+    // Clear the session cookie from browser (BTWA Module 10: Cookies).
+    // The attributes must match the ones it was set with or some browsers keep the cookie.
+    const { name, maxAge, ...cookieOptions } = req.app.locals.config.cookie;
+    res.clearCookie(name, cookieOptions);
 
     return sendSuccess(res, 200, "Logged out successfully");
   });
@@ -138,4 +159,16 @@ const getMe = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, logout, getMe };
+/**
+ * @route   GET /api/auth/demo-accounts
+ * @desc    Credentials for the login page's demo buttons — development only
+ * @access  Public, but answers 404 unless config.demoLoginEnabled (never in production by default)
+ */
+const getDemoAccounts = (req, res) => {
+  if (!req.app.locals.config.demoLoginEnabled) {
+    return sendError(res, 404, "Not found");
+  }
+  return sendSuccess(res, 200, "Demo accounts", demoAccounts);
+};
+
+module.exports = { register, login, logout, getMe, getDemoAccounts };
