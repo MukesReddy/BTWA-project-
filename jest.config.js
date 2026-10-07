@@ -2,9 +2,11 @@
 // Two test projects:
 //   unit        — fast, NO database needed. Models are mocked, or pages run in jsdom.
 //                 `npm test`
-//   integration — real MongoDB through mongodb-memory-server (downloads a mongod
-//                 binary on first run, so it needs internet access to fastdl.mongodb.org).
-//                 `npm run test:integration`   (or set MONGO_TEST_URI to use an existing server)
+//   integration — real MongoDB: set MONGO_TEST_URI to an existing server, or leave it unset to use
+//                 mongodb-memory-server (downloads a mongod binary on first run, so it needs
+//                 internet access to fastdl.mongodb.org).   `npm run test:integration`
+//                 NOTE: Jest ignores `testTimeout` inside a project config (it is global-only), so
+//                 tests run under the default 5 s. Keep each test cheap instead of raising it.
 
 const shared = {
   setupFiles: ["<rootDir>/tests/helpers/env.js"],
@@ -26,7 +28,6 @@ module.exports = {
       ...shared,
       displayName: "integration",
       testMatch: ["<rootDir>/tests/integration/**/*.test.js"],
-      testTimeout: 120000, // first run downloads the mongod binary
     },
   ],
 };

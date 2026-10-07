@@ -34,23 +34,48 @@ describe("atomic add", () => {
   });
 
   test("REGRESSION (first-add race): repeated 10-way races on a brand-new cart never return a false 400", async () => {
-    // Each round is a fresh user, so every round is a race to create the cart. Before the fix,
-    // a request that lost the race could see the winner's line and wrongly answer
+    // Every round starts with NO cart document for the user, so the 10 requests race to create it.
+    // Before the fix, a request that lost the race could see the winner's line and wrongly answer
     // "You can order at most 20 of one item".
+    //
+    // The user is created and logged in ONCE (bcrypt is deliberately slow, ~170 ms per user+login,
+    // and has nothing to do with the race); each round just deletes that user's cart.
+    const ROUNDS = 15;
+    const CONCURRENCY = 10;
     const food = await createFood();
-    for (let round = 0; round < 15; round++) {
-      const user = await createUser();
-      const agent = await loginAgent(app, user);
+    const user = await createUser();
+    const agent = await loginAgent(app, user);
 
+    const updateOne = jest.spyOn(Cart, "updateOne"); // call-through: only counts the database writes
+    const roundMs = [];
+    const callsPerRound = [];
+
+    for (let round = 0; round < ROUNDS; round++) {
+      await Cart.deleteMany({ user: user._id }); // brand-new cart for this round
+      updateOne.mockClear();
+
+      const started = Date.now();
       const results = await Promise.all(
-        Array.from({ length: 10 }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }))
+        Array.from({ length: CONCURRENCY }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }))
       );
+      roundMs.push(Date.now() - started);
+      callsPerRound.push(updateOne.mock.calls.length);
 
-      expect(results.map((r) => r.status)).toEqual(Array(10).fill(200));
+      expect(results.map((r) => r.status)).toEqual(Array(CONCURRENCY).fill(200));
       expect(await Cart.countDocuments({ user: user._id })).toBe(1);
       const items = await lines(user);
       expect(items).toHaveLength(1);
-      expect(items[0].quantity).toBe(10);
+      expect(items[0].quantity).toBe(CONCURRENCY);
+      // a healthy round takes tens of milliseconds; a hang / retry storm would be far above this
+      expect(roundMs[round]).toBeLessThan(2000);
+    }
+
+    if (process.env.DEBUG_TEST_DB) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `first-add race: round ms = [${roundMs.join(", ")}]; Cart.updateOne calls per round = [${callsPerRound.join(", ")}] ` +
+          `(${CONCURRENCY} = no retries; every extra 2 = one lost race that was retried)`
+      );
     }
   });
 
