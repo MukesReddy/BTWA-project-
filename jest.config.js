@@ -19,6 +19,7 @@ module.exports = {
     {
       ...shared,
       displayName: "unit",
+      setupFilesAfterEnv: [...shared.setupFilesAfterEnv, "<rootDir>/tests/helpers/setupUnit.js"],
       testMatch: ["<rootDir>/tests/unit/**/*.test.js", "<rootDir>/tests/frontend/**/*.test.js"],
     },
     {

@@ -7,8 +7,3 @@ jest.mock("../../utils/logger", () => ({
   error: jest.fn(),
   readLogs: jest.fn(),
 }));
-
-// Unit tests: any query that is NOT explicitly mocked must fail immediately
-// instead of hanging for 10s waiting for a connection that will never exist.
-// (Integration tests connect for real, so this flag is harmless there.)
-require("mongoose").set("bufferCommands", false);
