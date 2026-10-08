@@ -230,15 +230,29 @@ const startServer = async () => {
     process.exit(1);
   });
 
-  // Graceful shutdown: stop accepting connections, then close MongoDB.
-  const shutdown = (signal) => {
-    logger.info(`${signal} received: shutting down`);
+  // Graceful shutdown: stop accepting connections, then close MongoDB, then exit 0.
+  let shuttingDown = false;
+  const shutdown = (reason) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`${reason}: shutting down`);
     server.close(() => mongoose.disconnect().finally(() => process.exit(0)));
     server.closeIdleConnections(); // keep-alive sockets would otherwise delay the shutdown
     setTimeout(() => process.exit(1), 10000).unref(); // never hang forever
   };
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
-  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM received"));
+  process.once("SIGINT", () => shutdown("SIGINT received"));
+
+  // Windows has no POSIX signals: child.kill("SIGTERM") there terminates the process abruptly (exit
+  // code null, no handler runs). Process managers (pm2, tests) instead send an IPC "shutdown"
+  // message to a child started with an IPC channel; handle it with the same graceful path.
+  // process.send only exists when this process was spawned with an IPC channel, so a normal
+  // `node server.js` is unaffected.
+  if (typeof process.send === "function") {
+    process.on("message", (message) => {
+      if (message === "shutdown") shutdown("IPC shutdown message received");
+    });
+  }
 };
 
 if (require.main === module) {

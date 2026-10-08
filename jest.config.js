@@ -9,6 +9,9 @@
 //                 tests run under the default 5 s. Keep each test cheap instead of raising it.
 
 const shared = {
+  // Fails the run (with a stack trace) if any MaxListenersExceededWarning is emitted. See the helper.
+  globalSetup: "<rootDir>/tests/helpers/warningGuard.setup.js",
+  globalTeardown: "<rootDir>/tests/helpers/warningGuard.teardown.js",
   setupFiles: ["<rootDir>/tests/helpers/env.js"],
   setupFilesAfterEnv: ["<rootDir>/tests/helpers/setupAfterEnv.js"],
   clearMocks: true,   // reset call history between tests
