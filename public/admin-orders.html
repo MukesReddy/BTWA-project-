@@ -58,16 +58,10 @@
         <div style="flex:1">
           <label class="form-label">Update Status</label>
           <div style="display:flex;gap:.5rem">
-            <select id="newStatus" class="form-control">
-              <option value="Pending">Pending</option>
-              <option value="Confirmed">Confirmed</option>
-              <option value="Preparing">Preparing</option>
-              <option value="Out for Delivery">Out for Delivery</option>
-              <option value="Delivered">Delivered</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
-            <button class="btn btn-primary" onclick="updateStatus()">Update</button>
+            <select id="newStatus" class="form-control"></select>
+            <button id="updateStatusBtn" class="btn btn-primary" onclick="updateStatus()">Update</button>
           </div>
+          <div id="statusHint" style="font-size:.8rem;color:var(--text-muted);margin-top:.4rem"></div>
         </div>
       </div>
     </div>
@@ -129,6 +123,22 @@
       `).join('');
     }
 
+    // Offer only the legal next statuses (the server enforces the same rules and answers 409 otherwise).
+    function renderStatusChoices(current) {
+      const select = document.getElementById('newStatus');
+      const button = document.getElementById('updateStatusBtn');
+      const next = allowedNextStatuses(current);
+      const isFinal = next.length === 0;
+      select.innerHTML = isFinal
+        ? `<option value="">— final status —</option>`
+        : next.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      select.disabled = isFinal;
+      button.disabled = isFinal;
+      document.getElementById('statusHint').textContent = isFinal
+        ? `This order is ${current}. A ${current} order can no longer be changed.`
+        : `Current status: ${current}.`;
+    }
+
     async function openOrderDetail(id) {
       selectedOrder = id;
       document.getElementById('orderModal').classList.remove('hidden');
@@ -139,7 +149,7 @@
       const o = data.data;
 
       document.getElementById('modalTitle').textContent = `Order #${o._id.slice(-8).toUpperCase()}`;
-      document.getElementById('newStatus').value = o.orderStatus;
+      renderStatusChoices(o.orderStatus);
 
       document.getElementById('modalBody').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
@@ -173,6 +183,9 @@
         loadOrders();
       } else {
         showAlert('alertBox', data.message, 'error');
+        // After a 409 (illegal step, or someone changed the order first) show the real state again
+        openOrderDetail(selectedOrder);
+        loadOrders();
       }
     }
 

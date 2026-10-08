@@ -218,6 +218,28 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || 'badge-pending'}">${esc(status)}</span>`;
 }
 
+/* ── Order lifecycle ────────────────────────────────────────
+   MIRROR of ORDER_TRANSITIONS in utils/constants.js (the server enforces it and answers 409 for
+   anything else; this copy only decides which choices the pages offer). A test fails if the two differ. */
+const ORDER_TRANSITIONS = Object.freeze({
+  'Pending':          ['Confirmed', 'Cancelled'],
+  'Confirmed':        ['Preparing', 'Cancelled'],
+  'Preparing':        ['Out for Delivery', 'Cancelled'],
+  'Out for Delivery': ['Delivered'],
+  'Delivered':        [],
+  'Cancelled':        [],
+});
+
+/** Statuses an admin may move an order to from `status` (empty = final status). */
+function allowedNextStatuses(status) {
+  return ORDER_TRANSITIONS[status] ? [...ORDER_TRANSITIONS[status]] : [];
+}
+
+/** A customer may cancel their own order only while it is Pending. */
+function canCustomerCancel(status) {
+  return status === 'Pending';
+}
+
 /* ── Format Currency ────────────────────────────────────── */
 function formatPrice(amount) {
   return `₹${Number(amount).toFixed(2)}`;

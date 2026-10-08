@@ -35,6 +35,21 @@
 
   <script src="/js/main.js"></script>
   <script>
+    // "Cancel Order" is offered only while the order is Pending (the server enforces the same rule).
+    function cancelButton(order) {
+      return canCustomerCancel(order.orderStatus)
+        ? `<button class="btn btn-danger btn-sm" data-action="cancelOrder" data-id="${esc(order._id)}">Cancel Order</button>`
+        : '';
+    }
+
+    async function cancelOrder(orderId) {
+      if (!confirm('Cancel this order? This cannot be undone.')) return;
+      const { ok, data } = await apiCall('PUT', `/orders/${encodeURIComponent(orderId)}/cancel`);
+      showToast(ok ? 'Order cancelled' : (data.message || 'Could not cancel the order'), ok ? 'success' : 'error');
+      closeModal();
+      loadOrders(); // reload either way: after a 409 the list must show the order's real status
+    }
+
     async function loadOrders() {
       const content = document.getElementById('ordersContent');
 
@@ -81,7 +96,10 @@
                     ${statusBadge(order.orderStatus)}
                     <div style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">${esc(order.paymentMethod)}</div>
                   </div>
-                  <button class="btn btn-ghost btn-sm" data-action="showOrderDetail" data-id="${esc(order._id)}">View Details →</button>
+                  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                    <button class="btn btn-ghost btn-sm" data-action="showOrderDetail" data-id="${esc(order._id)}">View Details →</button>
+                    ${cancelButton(order)}
+                  </div>
                 </div>
                 <!-- Items preview -->
                 <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);display:flex;gap:.5rem;flex-wrap:wrap">
@@ -158,7 +176,8 @@
             ${esc(order.deliveryAddress?.street)}, ${esc(order.deliveryAddress?.city)},<br/>
             ${esc(order.deliveryAddress?.state)} — ${esc(order.deliveryAddress?.pincode)}
           </div>
-        </div>`;
+        </div>
+        ${canCustomerCancel(order.orderStatus) ? `<div style="margin-top:1.5rem;text-align:right">${cancelButton(order)}</div>` : ''}`;
     }
 
     function closeModal() {
@@ -170,7 +189,8 @@
     });
 
     registerActions({
-      showOrderDetail: (data) => showOrderDetail(data.id)
+      showOrderDetail: (data) => showOrderDetail(data.id),
+      cancelOrder:     (data) => cancelOrder(data.id)
     });
 
     document.addEventListener('DOMContentLoaded', loadOrders);
