@@ -21,14 +21,19 @@ const Food = require("../models/Food");
  *
  * BTWA Module 3: $group, $sum, $unwind, $sort, $limit, $lookup, $project, $match
  */
+// A cancelled order earned nothing, so every money figure below ignores it. The order COUNTS
+// (totalOrders, ordersByStatus) deliberately still include cancelled orders.
+const EXCLUDE_CANCELLED = { orderStatus: { $ne: "Cancelled" } };
+
 const getDashboardStats = async () => {
-  // 1. Total orders and total revenue using aggregation pipeline
+  // 1. Total orders (all statuses) and revenue (cancelled orders excluded) using aggregation pipelines
   // BTWA Module 3: $group with $sum
-  const orderStats = await Order.aggregate([
+  const orderStats = await Order.aggregate([{ $group: { _id: null, totalOrders: { $sum: 1 } } }]);
+  const revenueStats = await Order.aggregate([
+    { $match: EXCLUDE_CANCELLED },
     {
       $group: {
         _id: null,
-        totalOrders: { $sum: 1 },
         totalRevenue: { $sum: "$totalAmount" },
         avgOrderValue: { $avg: "$totalAmount" },
       },
@@ -56,6 +61,7 @@ const getDashboardStats = async () => {
   // 5. Popular foods — based on order frequency
   // BTWA Module 3: $unwind, $group, $sort, $limit
   const popularFoods = await Order.aggregate([
+    { $match: EXCLUDE_CANCELLED },            // cancelled orders were never cooked or delivered
     { $unwind: "$items" },                    // Deconstruct items array
     {
       $group: {
@@ -80,7 +86,8 @@ const getDashboardStats = async () => {
   //                $unwind  (flatten the joined userInfo array)
   //                $project (shape/limit output fields)
   const topSpenders = await Order.aggregate([
-    // Group all orders by user, summing their spend and order count
+    { $match: EXCLUDE_CANCELLED },  // money actually spent: cancelled orders do not count
+    // Group the remaining orders by user, summing their spend and order count
     {
       $group: {
         _id: "$user",
@@ -121,7 +128,7 @@ const getDashboardStats = async () => {
     {
       $match: {
         createdAt: { $gte: sevenDaysAgo },
-        orderStatus: { $ne: "Cancelled" },
+        ...EXCLUDE_CANCELLED,
       },
     },
     {
@@ -139,8 +146,8 @@ const getDashboardStats = async () => {
   return {
     summary: {
       totalOrders: orderStats[0]?.totalOrders || 0,
-      totalRevenue: orderStats[0]?.totalRevenue || 0,
-      avgOrderValue: Math.round(orderStats[0]?.avgOrderValue || 0),
+      totalRevenue: revenueStats[0]?.totalRevenue || 0,
+      avgOrderValue: Math.round(revenueStats[0]?.avgOrderValue || 0),
       pendingOrders,
       totalUsers,
     },

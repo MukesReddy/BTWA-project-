@@ -7,6 +7,7 @@ const Cart = require("../models/Cart");
 const Food = require("../models/Food");
 const Order = require("../models/Order");
 const emitter = require("../utils/eventEmitter");
+const { ORDER_TRANSITIONS, CUSTOMER_CANCEL_FROM } = require("../utils/constants");
 const logger = require("../utils/logger");
 
 /** Build an Error that the controller / central error handler turns into an HTTP status. */
@@ -147,4 +148,90 @@ const createOrder = async (userId, deliveryAddress, paymentMethod) => {
   return order;
 };
 
-module.exports = { createOrder };
+// ─── Order status changes ────────────────────────────────────────────────────
+// Every status change is ONE atomic findOneAndUpdate whose filter contains the status we expect the
+// order to be in. If two requests race (two admins, or the customer cancelling while an admin
+// confirms), MongoDB applies exactly one of them; the other matches nothing and gets 409.
+// The "orderStatusUpdated" event is emitted only after a successful update, with the status the
+// order REALLY moved from (the one in the filter), never a stale read.
+
+const isLegalTransition = (from, to) => (ORDER_TRANSITIONS[from] || []).includes(to);
+
+const allowedNext = (from) => {
+  const next = ORDER_TRANSITIONS[from] || [];
+  return next.length ? next.join(" or ") : "none (this is a final status)";
+};
+
+/** The order lost a race (or vanished) between our read and our update: say which. */
+const explainLostRace = async (orderId, message) => {
+  const now = await Order.findById(orderId).select("orderStatus").lean();
+  if (!now) throw httpError(404, "Order not found");
+  throw httpError(409, `${message} (it is now "${now.orderStatus}"). Please reload and try again.`);
+};
+
+const announceStatusChange = (orderId, oldStatus, newStatus) =>
+  emitter.emit("orderStatusUpdated", { orderId, oldStatus, newStatus });
+
+/**
+ * Admin: move an order along the lifecycle.
+ * @throws 404 order missing · 409 transition not allowed, or the order changed under us
+ * @returns {{order, oldStatus}}
+ */
+const transitionOrderStatus = async (orderId, newStatus) => {
+  const current = await Order.findById(orderId).select("orderStatus").lean();
+  if (!current) throw httpError(404, "Order not found");
+
+  const oldStatus = current.orderStatus;
+  if (!isLegalTransition(oldStatus, newStatus)) {
+    throw httpError(
+      409,
+      `Cannot change an order from "${oldStatus}" to "${newStatus}". Allowed next status: ${allowedNext(oldStatus)}.`
+    );
+  }
+
+  const order = await Order.findOneAndUpdate(
+    { _id: orderId, orderStatus: oldStatus }, // ← the expected current status makes this atomic
+    { $set: { orderStatus: newStatus } },
+    { new: true, runValidators: true }
+  ).populate("user", "name email");
+
+  if (!order) {
+    await explainLostRace(orderId, "This order was changed by someone else while you were updating it");
+  }
+
+  announceStatusChange(order._id, oldStatus, newStatus);
+  return { order, oldStatus };
+};
+
+/**
+ * Customer: cancel their OWN order, only while it is still Pending.
+ * @throws 404 missing · 403 not the owner · 409 no longer cancellable (or an admin got there first)
+ * @returns {{order, oldStatus}}
+ */
+const cancelOrderAsCustomer = async (orderId, userId) => {
+  const current = await Order.findById(orderId).select("user orderStatus").lean();
+  if (!current) throw httpError(404, "Order not found");
+
+  if (!current.user || current.user.toString() !== String(userId)) {
+    throw httpError(403, "You are not authorized to cancel this order");
+  }
+  if (!CUSTOMER_CANCEL_FROM.includes(current.orderStatus)) {
+    throw httpError(409, `Only Pending orders can be cancelled. This order is "${current.orderStatus}".`);
+  }
+
+  const oldStatus = current.orderStatus;
+  const order = await Order.findOneAndUpdate(
+    { _id: orderId, user: userId, orderStatus: oldStatus }, // owner AND expected status in the filter
+    { $set: { orderStatus: "Cancelled" } },
+    { new: true, runValidators: true }
+  ).populate("user", "name email");
+
+  if (!order) {
+    await explainLostRace(orderId, "This order can no longer be cancelled");
+  }
+
+  announceStatusChange(order._id, oldStatus, "Cancelled");
+  return { order, oldStatus };
+};
+
+module.exports = { createOrder, transitionOrderStatus, cancelOrderAsCustomer, isLegalTransition };

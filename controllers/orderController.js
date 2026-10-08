@@ -4,7 +4,7 @@
 // BTWA Module 5: EventEmitter integration via orderService
 
 const Order = require("../models/Order");
-const { createOrder } = require("../services/orderService");
+const { createOrder, cancelOrderAsCustomer } = require("../services/orderService");
 const { sendSuccess, sendError } = require("../utils/helpers");
 
 /**
@@ -86,4 +86,23 @@ const getOrderById = async (req, res, next) => {
   }
 };
 
-module.exports = { placeOrder, getMyOrders, getOrderById };
+/**
+ * @route   PUT /api/orders/:id/cancel
+ * @desc    Cancel one of the logged-in user's own orders (only while it is still Pending)
+ * @access  Authenticated owner (403 for anyone else, admins included — they use the admin route)
+ * Errors: 404 no such order · 403 not yours · 409 no longer Pending (or an admin moved it first)
+ * BTWA Module 5: EventEmitter ("orderStatusUpdated", emitted by orderService)
+ */
+const cancelOrder = async (req, res, next) => {
+  try {
+    const { order } = await cancelOrderAsCustomer(req.params.id, req.session.userId);
+    return sendSuccess(res, 200, "Order cancelled", order);
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.statusCode, error.message);
+    }
+    next(error);
+  }
+};
+
+module.exports = { placeOrder, getMyOrders, getOrderById, cancelOrder };

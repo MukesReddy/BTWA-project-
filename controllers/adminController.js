@@ -12,7 +12,7 @@ const { getDashboardStats } = require("../services/analyticsService");
 const { sendSuccess, sendError, sanitizeUser, escapeRegex } = require("../utils/helpers");
 const { ORDER_STATUSES } = require("../utils/constants");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
-const emitter = require("../utils/eventEmitter");   // BTWA Module 5: EventEmitter
+const { transitionOrderStatus } = require("../services/orderService"); // atomic status change + EventEmitter
 const { revokeUserSessions } = require("../utils/sessions");
 
 /**
@@ -105,10 +105,10 @@ const getAllOrders = async (req, res, next) => {
 
 /**
  * @route   PUT /api/admin/orders/:id/status
- * @desc    Update order status
+ * @desc    Update order status (only legal lifecycle steps; 409 otherwise)
  * @access  Admin
- * BTWA Module 2: findByIdAndUpdate
- * BTWA Module 5: EventEmitter via emitter (imported in orderController)
+ * BTWA Module 2: findOneAndUpdate with the expected status in the filter (atomic)
+ * BTWA Module 5: EventEmitter ("orderStatusUpdated", emitted by orderService after the update)
  */
 const updateOrderStatus = async (req, res, next) => {
   try {
@@ -119,29 +119,12 @@ const updateOrderStatus = async (req, res, next) => {
       return sendError(res, 400, `Invalid status. Valid values: ${validStatuses.join(", ")}`);
     }
 
-    const order = await Order.findById(req.params.id);
-    if (!order) {
-      return sendError(res, 404, "Order not found");
-    }
-
-    const oldStatus = order.orderStatus;
-
-    // BTWA Module 2: findByIdAndUpdate with operators
-    const updatedOrder = await Order.findByIdAndUpdate(
-      req.params.id,
-      { orderStatus: status },
-      { new: true, runValidators: true }
-    ).populate("user", "name email");
-
-    // Emit event (BTWA Module 5: EventEmitter)
-    emitter.emit("orderStatusUpdated", {
-      orderId: order._id,
-      oldStatus,
-      newStatus: status,
-    });
+    // Lifecycle rules + atomic update + event: see services/orderService.js (409 on illegal / lost race)
+    const { order: updatedOrder } = await transitionOrderStatus(req.params.id, status);
 
     return sendSuccess(res, 200, `Order status updated to ${status}`, updatedOrder);
   } catch (error) {
+    if (error.statusCode) return sendError(res, error.statusCode, error.message);
     next(error);
   }
 };

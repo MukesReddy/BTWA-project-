@@ -4,7 +4,7 @@
 const express = require("express");
 const router = express.Router();
 
-const { placeOrder, getMyOrders, getOrderById } = require("../controllers/orderController");
+const { placeOrder, getMyOrders, getOrderById, cancelOrder } = require("../controllers/orderController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { validateOrder, validateIdParam } = require("../middleware/validationMiddleware");
 
@@ -17,5 +17,6 @@ router.param("id", validateIdParam);
 router.post("/", validateOrder, placeOrder);
 router.get("/", getMyOrders);
 router.get("/:id", getOrderById);
+router.put("/:id/cancel", cancelOrder); // owner only, Pending only (see orderService)
 
 module.exports = router;
