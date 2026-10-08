@@ -179,3 +179,86 @@ describe("POST /api/orders (HTTP)", () => {
     expect(res.body.success).toBe(false);
   });
 });
+
+// ─── Double submit: the TWO legitimate outcomes for the second request ────────────────────────────
+// An in-memory cart whose claim (findOneAndDelete) is atomic, like MongoDB's. Which of the two
+// outcomes a real race produces depends only on TIMING (and --detectOpenHandles shifts the timing):
+//   • both requests read the cart before either claims it   → the claim is lost  → 409
+//   • the second request reads the cart after the claim     → no cart any more   → 400 "cart is empty"
+// Exactly one order is created either way. The integration test forces each case deterministically.
+describe("POST /api/orders double submit — outcomes of the second request", () => {
+  const ADDRESS = { street: "12 MG Road", city: "Hyderabad", state: "Telangana", pincode: "500001" };
+  const BODY = { deliveryAddress: ADDRESS, paymentMethod: "Cash on Delivery" };
+  const FOOD = { _id: ID("f".repeat(24)), name: "Biryani", price: 80, available: true };
+
+  const install = ({ gate = null } = {}) => {
+    const updatedAt = new Date("2026-01-01T10:00:00Z");
+    const state = {
+      cart: { _id: newId(), user: newId(), updatedAt, items: [{ food: ID("f".repeat(24)), quantity: 2 }] },
+      orders: [],
+    };
+    jest.spyOn(Cart, "findOne").mockImplementation(() => {
+      const snapshot = state.cart; // what the database holds at the moment of the read
+      return query(gate ? gate().then(() => snapshot) : snapshot);
+    });
+    jest.spyOn(Food, "find").mockReturnValue(query([FOOD]));
+    jest.spyOn(Cart, "updateOne").mockResolvedValue({});
+    jest.spyOn(Cart, "findOneAndDelete").mockImplementation(async (filter) => {
+      // atomic claim: matches only if the cart still exists and is unchanged
+      if (!state.cart || String(state.cart._id) !== String(filter._id) || state.cart.updatedAt !== filter.updatedAt) return null;
+      const claimed = state.cart;
+      state.cart = null;
+      return { ...claimed, toObject: () => ({ items: [] }) };
+    });
+    jest.spyOn(Order, "create").mockImplementation(async (doc) => {
+      state.orders.push(doc);
+      return { _id: newId(), ...doc };
+    });
+    return state;
+  };
+
+  test("both read the cart first (forced) → one 201, the other 409 'already placed'; one order", async () => {
+    const { agent } = await loginAs(app, { role: "customer" });
+    let reads = 0;
+    let release;
+    const opened = new Promise((resolve) => (release = resolve));
+    const state = install({ gate: () => { if (++reads === 2) release(); return opened; } });
+
+    const results = await Promise.all([agent.post("/api/orders").send(BODY), agent.post("/api/orders").send(BODY)]);
+
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(results.find((r) => r.status === 409).body.message).toMatch(/already placed/i);
+    expect(state.orders).toHaveLength(1);
+  });
+
+  test("the second request arrives AFTER the claim → 201 then 400 'Your cart is empty' (the [201, 400] seen under --detectOpenHandles); one order", async () => {
+    const { agent } = await loginAs(app, { role: "customer" });
+    const state = install();
+
+    const first = await agent.post("/api/orders").send(BODY);
+    const second = await agent.post("/api/orders").send(BODY);
+
+    expect([first.status, second.status]).toEqual([201, 400]);
+    expect(second.body.message).toBe("Your cart is empty. Add items before placing an order.");
+    expect(state.orders).toHaveLength(1);
+  });
+
+  test("whatever the timing, the invariant is: exactly one 201, exactly one order, the loser is 409-claim-lost or 400-cart-empty", async () => {
+    for (const gate of [true, false]) {
+      jest.restoreAllMocks();
+      const { agent } = await loginAs(app, { role: "customer" });
+      let reads = 0;
+      let release;
+      const opened = new Promise((resolve) => (release = resolve));
+      const state = install({ gate: gate ? () => { if (++reads === 2) release(); return opened; } : null });
+
+      const results = await Promise.all([agent.post("/api/orders").send(BODY), agent.post("/api/orders").send(BODY)]);
+
+      expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+      expect(state.orders).toHaveLength(1);
+      const loser = results.find((r) => r.status !== 201);
+      expect([409, 400]).toContain(loser.status);
+      expect(loser.body.message).toMatch(loser.status === 409 ? /already placed/i : /cart is empty/i);
+    }
+  });
+});

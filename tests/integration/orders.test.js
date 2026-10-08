@@ -83,18 +83,77 @@ test("a food that became UNAVAILABLE: 400 naming it, cart untouched, no order", 
   expect(await Cart.countDocuments({ user: user._id })).toBe(1);
 });
 
-test("DOUBLE SUBMIT: two simultaneous 'Place order' requests create exactly ONE order", async () => {
+// ─── DOUBLE SUBMIT ───────────────────────────────────────────────────────────────────────────────
+// Two identical "Place order" requests can legitimately end two ways, depending only on TIMING:
+//   • both read the cart before either claims it → the claim (findOneAndDelete) is lost → 409
+//   • the second reads the cart after the winner claimed it → there is no cart → 400 "cart is empty"
+//     (indistinguishable from a genuinely empty cart: the cart document is gone)
+// Timing differs between a plain run and `--detectOpenHandles` (async_hooks slow everything down), so
+// a test that expects one outcome from free-running requests is flaky. These tests instead
+//   1. FORCE the race (hold both cart reads until both requests have started) → strict 409,
+//   2. FORCE the late duplicate (second request starts after the first finished) → strict 400,
+//   3. leave the timing free and assert the invariant, printing both responses if it ever breaks.
+// The real atomic guarantee under test is the same in all three: exactly ONE order.
+
+const CLAIM_LOST = /already placed/i;
+const CART_EMPTY = /cart is empty/i;
+const outcomes = (results) => JSON.stringify(results.map((r) => ({ status: r.status, message: r.body && r.body.message })));
+
+test("DOUBLE SUBMIT, race forced (both read the cart first): exactly one 201 and one 409 'already placed'; ONE order", async () => {
   const user = await createUser();
   const food = await createFood({ price: 80 });
   const agent = await loginAgent(app, user);
   await fill(agent, [[food, 2]]);
 
-  const results = await Promise.all([
-    agent.post("/api/orders").send(ORDER_BODY),
-    agent.post("/api/orders").send(ORDER_BODY),
-  ]);
+  // Test-side timing control only: the real query still runs; it just starts after BOTH requests reached it.
+  const realFindOne = Cart.findOne.bind(Cart);
+  let reads = 0;
+  let release;
+  const bothArrived = new Promise((resolve) => (release = resolve));
+  jest.spyOn(Cart, "findOne").mockImplementation((...args) => {
+    const q = realFindOne(...args);
+    if (++reads === 2) release();
+    return bothArrived.then(() => q);
+  });
 
-  expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+  const results = await Promise.all([agent.post("/api/orders").send(ORDER_BODY), agent.post("/api/orders").send(ORDER_BODY)]);
+
+  expect({ codes: results.map((r) => r.status).sort(), detail: outcomes(results) }).toEqual({ codes: [201, 409], detail: outcomes(results) });
+  expect(results.find((r) => r.status === 409).body.message).toMatch(CLAIM_LOST);
+  expect(await Order.countDocuments({ user: user._id })).toBe(1);
+});
+
+test("DOUBLE SUBMIT, late duplicate (second request after the first finished): 201 then 400 'cart is empty'; ONE order", async () => {
+  const user = await createUser();
+  const food = await createFood({ price: 80 });
+  const agent = await loginAgent(app, user);
+  await fill(agent, [[food, 2]]);
+
+  const first = await agent.post("/api/orders").send(ORDER_BODY);
+  const second = await agent.post("/api/orders").send(ORDER_BODY);
+
+  expect([first.status, second.status]).toEqual([201, 400]);
+  expect(second.body.message).toMatch(CART_EMPTY);
+  expect(await Order.countDocuments({ user: user._id })).toBe(1);
+});
+
+test("DOUBLE SUBMIT, free-running: exactly one 201 and ONE order; the other is 409-claim-lost or 400-cart-empty (never anything else)", async () => {
+  const user = await createUser();
+  const food = await createFood({ price: 80 });
+  const agent = await loginAgent(app, user);
+  await fill(agent, [[food, 2]]);
+
+  const results = await Promise.all([agent.post("/api/orders").send(ORDER_BODY), agent.post("/api/orders").send(ORDER_BODY)]);
+
+  const created = results.filter((r) => r.status === 201);
+  const rejected = results.filter((r) => r.status !== 201);
+  if (created.length !== 1 || rejected.length !== 1) throw new Error(`expected one 201 and one rejection, got: ${outcomes(results)}`);
+
+  const [loser] = rejected;
+  const claimLost = loser.status === 409 && CLAIM_LOST.test(loser.body.message);
+  const cartAlreadyConsumed = loser.status === 400 && CART_EMPTY.test(loser.body.message);
+  if (!claimLost && !cartAlreadyConsumed) throw new Error(`the rejected request is neither claim-lost (409) nor cart-empty (400): ${outcomes(results)}`);
+
   expect(await Order.countDocuments({ user: user._id })).toBe(1);
 });
 

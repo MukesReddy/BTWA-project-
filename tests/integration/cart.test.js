@@ -40,6 +40,7 @@ describe("atomic add", () => {
     //
     // The user is created and logged in ONCE (bcrypt is deliberately slow, ~170 ms per user+login,
     // and has nothing to do with the race); each round just deletes that user's cart.
+    const testStarted = Date.now(); // Jest's 5 s limit includes the setup below
     const ROUNDS = 15;
     const CONCURRENCY = 10;
     const food = await createFood();
@@ -50,32 +51,59 @@ describe("atomic add", () => {
     const roundMs = [];
     const callsPerRound = [];
 
-    for (let round = 0; round < ROUNDS; round++) {
-      await Cart.deleteMany({ user: user._id }); // brand-new cart for this round
-      updateOne.mockClear();
+    // Self-reporting: Jest's own timeout only says "exceeded 5000 ms". A watchdog fires at 4.5 s (the test
+    // is still failing under the same 5 s limit; nothing is relaxed) so the failure can say WHY: every round
+    // uniformly slow with calls per round = 10 (overhead), calls per round above 10 (retry storm), or one
+    // round that never finished (hang).
+    const JEST_LIMIT_MS = 5000;
+    const report = () =>
+      `rounds finished: ${roundMs.length}/${ROUNDS}; elapsed ${Date.now() - testStarted} ms of ${JEST_LIMIT_MS} ms; ` +
+      `round ms = [${roundMs.join(", ")}]; Cart.updateOne calls per round = [${callsPerRound.join(", ")}] ` +
+      `(${CONCURRENCY} = no retries; every extra 2 = one lost race that was retried)`;
 
-      const started = Date.now();
-      const results = await Promise.all(
-        Array.from({ length: CONCURRENCY }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }))
-      );
-      roundMs.push(Date.now() - started);
-      callsPerRound.push(updateOne.mock.calls.length);
+    let stopped = false;
+    let watchdogTimer;
+    const watchdog = new Promise((resolve, reject) => {
+      watchdogTimer = setTimeout(() => {
+        stopped = true;
+        reject(new Error(`first-add race still running after ${JEST_LIMIT_MS - 500} ms`));
+      }, JEST_LIMIT_MS - 500);
+    });
 
-      expect(results.map((r) => r.status)).toEqual(Array(CONCURRENCY).fill(200));
-      expect(await Cart.countDocuments({ user: user._id })).toBe(1);
-      const items = await lines(user);
-      expect(items).toHaveLength(1);
-      expect(items[0].quantity).toBe(CONCURRENCY);
-      // a healthy round takes tens of milliseconds; a hang / retry storm would be far above this
-      expect(roundMs[round]).toBeLessThan(2000);
+    const runRounds = async () => {
+      for (let round = 0; round < ROUNDS && !stopped; round++) {
+        await Cart.deleteMany({ user: user._id }); // brand-new cart for this round
+        updateOne.mockClear();
+
+        const started = Date.now();
+        const results = await Promise.all(
+          Array.from({ length: CONCURRENCY }, () => agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }))
+        );
+        roundMs.push(Date.now() - started);
+        callsPerRound.push(updateOne.mock.calls.length);
+
+        expect(results.map((r) => r.status)).toEqual(Array(CONCURRENCY).fill(200));
+        expect(await Cart.countDocuments({ user: user._id })).toBe(1);
+        const items = await lines(user);
+        expect(items).toHaveLength(1);
+        expect(items[0].quantity).toBe(CONCURRENCY);
+        // a healthy round takes tens of milliseconds; a hang / retry storm would be far above this
+        expect(roundMs[round]).toBeLessThan(2000);
+      }
+    };
+
+    try {
+      await Promise.race([runRounds(), watchdog]);
+    } catch (error) {
+      error.message = `${error.message}\n${report()}`;
+      throw error;
+    } finally {
+      clearTimeout(watchdogTimer);
     }
 
     if (process.env.DEBUG_TEST_DB) {
       // eslint-disable-next-line no-console
-      console.log(
-        `first-add race: round ms = [${roundMs.join(", ")}]; Cart.updateOne calls per round = [${callsPerRound.join(", ")}] ` +
-          `(${CONCURRENCY} = no retries; every extra 2 = one lost race that was retried)`
-      );
+      console.log(`first-add race: ${report()}`);
     }
   });
 
