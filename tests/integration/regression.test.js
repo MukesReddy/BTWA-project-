@@ -6,6 +6,7 @@ const request = require("supertest");
 const app = require("../../server");
 const { connectTestDb, clearTestDb, disconnectTestDb } = require("../helpers/db");
 const { createUser, createCategory, createFood, loginAgent, ORDER_BODY } = require("../helpers/factories");
+const { newAgent, refreshCsrf } = require("../helpers/client");
 
 beforeAll(connectTestDb);
 beforeEach(clearTestDb);
@@ -15,7 +16,7 @@ test("customer journey: register → login → browse → cart → checkout → 
   const category = await createCategory({ name: "Biryani" });
   const food = await createFood({ name: "Hyderabadi Biryani", price: 250, category: category._id });
 
-  const agent = request.agent(app);
+  const agent = await newAgent(app); // like the real page: fetches a CSRF token first
   const register = await agent.post("/api/auth/register").send({ name: "Asha Rao", email: "asha@example.com", password: "secret12", phone: "9876543210" });
   expect(register.status).toBe(201);
 
@@ -23,6 +24,7 @@ test("customer journey: register → login → browse → cart → checkout → 
   const login = await agent.post("/api/auth/login").send({ email: "asha@example.com", password: "secret12" });
   expect(login.status).toBe(200);
   expect(login.body.data.user).not.toHaveProperty("password");
+  await refreshCsrf(agent); // login starts a new session, so the page fetches a new token
   expect((await agent.get("/api/auth/me")).body.data.user.email).toBe("asha@example.com");
 
   const menu = await request(app).get(`/api/foods?category=${category.id}`);
@@ -56,7 +58,7 @@ test("customer journey: register → login → browse → cart → checkout → 
 
 test("duplicate registration → 409; customers cannot use admin routes", async () => {
   await createUser({ email: "dup@example.com" });
-  const dup = await request(app).post("/api/auth/register").send({ name: "Dup", email: "dup@example.com", password: "secret12" });
+  const dup = await (await newAgent(app)).post("/api/auth/register").send({ name: "Dup", email: "dup@example.com", password: "secret12" });
   expect(dup.status).toBe(409);
 
   const customer = await createUser();

@@ -8,7 +8,7 @@ const Cart = require("../../models/Cart");
 const Order = require("../../models/Order");
 const { connectTestDb, clearTestDb, disconnectTestDb } = require("../helpers/db");
 const { createUser, createFood, loginAgent, PASSWORD, ORDER_BODY } = require("../helpers/factories");
-const request = require("supertest");
+const { newAgent } = require("../helpers/client");
 
 beforeAll(connectTestDb);
 beforeEach(clearTestDb);
@@ -65,7 +65,7 @@ describe("user WITH orders", () => {
     expect(remaining).toHaveLength(1);
     expect(remaining[0].session).toContain(bystander.id);
     // login refused with 403
-    const login = await request(app).post("/api/auth/login").send({ email: customer.email, password: PASSWORD });
+    const login = await (await newAgent(app)).post("/api/auth/login").send({ email: customer.email, password: PASSWORD });
     expect(login.status).toBe(403);
     // and the admin list flags the account
     const users = await adminAgent.get("/api/admin/users");
