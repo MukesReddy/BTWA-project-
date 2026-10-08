@@ -7,7 +7,8 @@ const app = require("../../server");
 const Cart = require("../../models/Cart");
 const Food = require("../../models/Food");
 const { connectTestDb, clearTestDb, disconnectTestDb } = require("../helpers/db");
-const { createUser, createFood, loginAgent } = require("../helpers/factories");
+const Order = require("../../models/Order");
+const { createUser, createFood, loginAgent, ORDER_BODY } = require("../helpers/factories");
 const { MAX_CART_QUANTITY } = require("../../utils/constants");
 
 beforeAll(connectTestDb);
@@ -274,5 +275,87 @@ describe("cart reflects live data (P1.9/P1.11)", () => {
     expect(await Cart.countDocuments({ "items.food": doomed._id })).toBe(0);
     expect((await lines(u1)).map((i) => i.food.toString())).toEqual([other.id]);
     expect(await lines(u2)).toHaveLength(0);
+  });
+});
+
+// Batch 4 — an order placed while a cart request is in flight.
+// The race is FORCED, not hoped for: right after the request's own cart write succeeds (the real write runs),
+// the same customer's checkout runs to completion — claims the cart and deletes it, exactly like a second
+// tab pressing "Place order" — and only then does the request read the cart back. Only the test's timing is
+// controlled; the application code is untouched. Before Batch 4 this was a TypeError → HTTP 500.
+describe("checkout completes between a cart write and the read-back → 409 (never 500)", () => {
+  const CHECKED_OUT = "Your cart was just checked out. Please review your cart and try again.";
+
+  // Wraps Cart.updateOne (call-through): after the FIRST real write, place the order through the real endpoint.
+  const checkoutAfterNextCartWrite = (agent) => {
+    const realUpdateOne = Cart.updateOne.bind(Cart);
+    let fired = false;
+    return jest.spyOn(Cart, "updateOne").mockImplementation(async (...args) => {
+      const result = await realUpdateOne(...args);
+      if (!fired) {
+        fired = true;
+        const order = await agent.post("/api/orders").send(ORDER_BODY);
+        if (order.status !== 201) throw new Error(`test setup: the checkout should succeed, got ${order.status} ${JSON.stringify(order.body)}`);
+      }
+      return result;
+    });
+  };
+
+  test("POST /api/cart: the add is applied, the order takes the cart → 409; exactly one order, no cart left", async () => {
+    const user = await createUser();
+    const food = await createFood({ price: 100 });
+    const agent = await loginAgent(app, user);
+    await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 }); // the cart exists with the line
+    checkoutAfterNextCartWrite(agent);
+
+    const res = await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ success: false, message: CHECKED_OUT });
+    expect(await Order.countDocuments({ user: user._id })).toBe(1);
+    const order = await Order.findOne({ user: user._id });
+    expect(order.items[0].quantity).toBe(2); // the add that "failed" with 409 really was applied before checkout took it
+    expect(await Cart.countDocuments({ user: user._id })).toBe(0);
+  });
+
+  test("PUT /api/cart/:foodId: same race → 409; the order carries the updated quantity", async () => {
+    const user = await createUser();
+    const food = await createFood({ price: 100 });
+    const agent = await loginAgent(app, user);
+    await agent.post("/api/cart").send({ foodId: food.id, quantity: 2 });
+    checkoutAfterNextCartWrite(agent);
+
+    const res = await agent.put(`/api/cart/${food.id}`).send({ quantity: 5 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe(CHECKED_OUT);
+    const order = await Order.findOne({ user: user._id });
+    expect(order.items[0].quantity).toBe(5);
+    expect(await Cart.countDocuments({ user: user._id })).toBe(0);
+  });
+
+  test("the customer recovers: the cart reads as empty (200) and a new add works (200)", async () => {
+    const user = await createUser();
+    const food = await createFood({ price: 100 });
+    const agent = await loginAgent(app, user);
+    await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 });
+    checkoutAfterNextCartWrite(agent);
+    expect((await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 })).status).toBe(409);
+    jest.restoreAllMocks(); // stop interfering; (loginAgent's session lookup is the real User model here)
+
+    const cart = await agent.get("/api/cart");
+    expect(cart.status).toBe(200);
+    expect(cart.body.data.items).toEqual([]);
+    const again = await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 });
+    expect(again.status).toBe(200);
+    expect(again.body.data.items).toHaveLength(1);
+  });
+
+  test("without a concurrent checkout nothing changes: add and update still answer 200", async () => {
+    const user = await createUser();
+    const food = await createFood({ price: 100 });
+    const agent = await loginAgent(app, user);
+    expect((await agent.post("/api/cart").send({ foodId: food.id, quantity: 1 })).status).toBe(200);
+    expect((await agent.put(`/api/cart/${food.id}`).send({ quantity: 3 })).status).toBe(200);
   });
 });

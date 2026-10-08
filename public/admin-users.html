@@ -88,9 +88,11 @@
             <td style="font-size:.8rem;color:var(--text-muted)">${u.address?.city ? `${esc(u.address.city)}, ${esc(u.address.state)}` : '—'}</td>
             <td style="font-size:.8rem;color:var(--text-muted)">${formatDate(u.createdAt)}</td>
             <td>
-              ${u._id !== adminId
-                ? `<button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${esc(u._id)}" data-name="${esc(u.name)}" title="Delete / deactivate user">🗑️</button>`
-                : '<span style="font-size:.8rem;color:var(--text-muted)">You</span>'}
+              ${u._id === adminId
+                ? '<span style="font-size:.8rem;color:var(--text-muted)">You</span>'
+                : u.isActive === false
+                  ? `<button class="btn btn-primary btn-sm" data-action="reactivateUser" data-id="${esc(u._id)}" data-name="${esc(u.name)}" data-role="${esc(u.role)}" title="Let this user log in again">Reactivate</button>`
+                  : `<button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${esc(u._id)}" data-name="${esc(u.name)}" title="Delete / deactivate user">🗑️</button>`}
             </td>
           </tr>`).join('')}
         </tbody></table></div>
@@ -104,6 +106,15 @@
       else showAlert('alertBox', data.message, 'error');
     }
 
+    // Undo a deactivation. The server only reactivates an account that is currently deactivated.
+    async function reactivateUser(id, name, role) {
+      const adminNote = role === 'admin' ? '\n\nThis is an ADMIN account: it will have admin access again.' : '';
+      if (!confirm(`Reactivate user "${name}"?\n\nThey will be able to log in again. Their order history was kept; their old cart and sessions are not restored.${adminNote}`)) return;
+      const { ok, data } = await apiCall('PUT', `/admin/users/${encodeURIComponent(id)}/reactivate`);
+      if (ok) { showToast(data.message || 'User reactivated', 'success'); loadUsers(); }
+      else showAlert('alertBox', data.message, 'error');
+    }
+
     // Debounced search
     let searchTimer;
     document.getElementById('searchInput').addEventListener('input', () => {
@@ -113,7 +124,8 @@
     document.getElementById('roleFilter').addEventListener('change', loadUsers);
 
     registerActions({
-      deleteUser: (data) => deleteUser(data.id, data.name)
+      deleteUser: (data) => deleteUser(data.id, data.name),
+      reactivateUser: (data) => reactivateUser(data.id, data.name, data.role)
     });
 
     document.addEventListener('DOMContentLoaded', loadUsers);

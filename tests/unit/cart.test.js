@@ -220,6 +220,73 @@ describe("PUT /api/cart/:foodId (set quantity)", () => {
   });
 });
 
+// Batch 4 — an order placed at the same moment claims the cart and DELETES it (services/orderService.js).
+// If that happens between our successful write and our "read the cart back", findOne returns null.
+// That used to crash buildCartResponse(null) → 500. It is a conflict the customer can resolve → 409.
+describe("a cart that vanishes right after a successful write (concurrent checkout) → 409, never 500", () => {
+  const CHECKED_OUT = "Your cart was just checked out. Please review your cart and try again.";
+  let agent, f;
+
+  beforeEach(async () => {
+    ({ agent } = await loginAs(app));
+    f = food();
+    jest.spyOn(Food, "findById").mockResolvedValue({ ...f, _id: { toString: () => f._id } });
+    jest.spyOn(Food, "find").mockReturnValue(query([f]));
+    jest.spyOn(Cart, "findOne").mockImplementation(() => query(null)); // the order took the cart
+  });
+
+  test("POST /api/cart: the add succeeded, the cart is gone → 409 with a clear message", async () => {
+    const update = jest.spyOn(Cart, "updateOne").mockResolvedValue({ matchedCount: 1 });
+
+    const res = await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 });
+
+    expect(update).toHaveBeenCalledTimes(1); // the write really happened first
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ success: false, message: CHECKED_OUT });
+    expect(Food.find).not.toHaveBeenCalled(); // no attempt to build a response from nothing
+  });
+
+  test("PUT /api/cart/:foodId: the update matched, the cart is gone → 409 with the same message", async () => {
+    jest.spyOn(Cart, "updateOne").mockResolvedValue({ matchedCount: 1 });
+
+    const res = await agent.put(`/api/cart/${f._id}`).send({ quantity: 3 });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ success: false, message: CHECKED_OUT });
+    expect(Food.find).not.toHaveBeenCalled();
+  });
+
+  test("the 409 never leaks a stack trace or internals", async () => {
+    jest.spyOn(Cart, "updateOne").mockResolvedValue({ matchedCount: 1 });
+    const res = await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 });
+    expect(JSON.stringify(res.body)).not.toMatch(/TypeError|Cannot read|\.js:/);
+  });
+
+  test("UNCHANGED: GET /api/cart with no cart is still 200 and empty", async () => {
+    const res = await agent.get("/api/cart");
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ items: [], total: 0 });
+  });
+
+  test("UNCHANGED: DELETE /api/cart/:foodId with no cart is still 404", async () => {
+    jest.spyOn(Cart, "findOneAndUpdate").mockResolvedValue(null);
+    const res = await agent.delete(`/api/cart/${f._id}`);
+    expect(res.status).toBe(404);
+  });
+
+  test("UNCHANGED: when the cart still exists the normal 200 response is returned", async () => {
+    jest.spyOn(Cart, "updateOne").mockResolvedValue({ matchedCount: 1 });
+    Cart.findOne.mockImplementation(() => query(cartDoc(newId(), [{ food: { toString: () => f._id }, quantity: 3, price: 1 }])));
+
+    const add = await agent.post("/api/cart").send({ foodId: f._id, quantity: 1 });
+    const set = await agent.put(`/api/cart/${f._id}`).send({ quantity: 3 });
+
+    expect(add.status).toBe(200);
+    expect(set.status).toBe(200);
+    expect(set.body.data.total).toBe(360);
+  });
+});
+
 describe("buildCartResponse", () => {
   test("drops lines whose food was deleted, prunes them from the DB, and totals the rest", async () => {
     const alive = food({ price: 10.1 });

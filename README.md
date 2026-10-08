@@ -19,15 +19,16 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 - Add food to cart, update quantities, and remove items
 - Place orders with delivery address and cash-on-delivery payment
 - View order history and track order status
+- Cancel their own order while it is still **Pending**
 - Update profile and delivery address
 
 ### Admin
 - Admin dashboard with real-time MongoDB aggregation statistics
 - Manage food items (add, edit, delete)
 - Manage categories (add, edit, delete with integrity check)
-- View and manage all users
+- View all users; delete a user, or **deactivate** one who has orders (order history is kept) and **reactivate** them later
 - View all orders with status filtering
-- Update order status through the full lifecycle
+- Move orders through the lifecycle (only legal steps are accepted — see [Order Lifecycle](#order-lifecycle))
 - Export all orders as a CSV file (Node.js streams demo)
 
 ---
@@ -40,9 +41,10 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 | Database | MongoDB, Mongoose |
 | Authentication | express-session, bcryptjs |
 | Frontend | HTML5, CSS3, Vanilla JavaScript |
-| Middleware | Helmet, CORS, Morgan, express-validator |
+| Middleware | Helmet, CORS, Morgan, express-validator, express-rate-limit |
 | Session Store | connect-mongo (sessions in MongoDB) |
 | Dev Tools | nodemon, dotenv |
+| Testing | Jest, supertest, jsdom (see [Testing](#testing)) |
 
 ---
 
@@ -56,12 +58,15 @@ Express.js Server (server.js)
     │
     ├── Middleware Stack
     │   ├── Helmet (security headers)
-    │   ├── CORS
+    │   ├── CORS (off unless CORS_ORIGINS is set)
     │   ├── Morgan (HTTP logger)
-    │   ├── express.json() + urlencoded()
+    │   ├── express.static (frontend files)
+    │   ├── express.json() (JSON bodies only)
     │   ├── express-session (MongoDB store)
-    │   ├── authMiddleware (session-based auth)
-    │   ├── adminMiddleware (role-based auth)
+    │   ├── rateLimiters (API, login, register, orders)
+    │   ├── csrfMiddleware (origin + JSON + X-CSRF-Token on writes)
+    │   ├── authMiddleware (session auth, re-checked against the database)
+    │   ├── adminMiddleware (isAdmin / isCustomer role checks)
     │   ├── validationMiddleware (express-validator)
     │   └── errorMiddleware (centralized error handling)
     │
@@ -79,6 +84,8 @@ Express.js Server (server.js)
     └── Utils
         ├── logger.js (Node.js fs — async file logging)
         ├── eventEmitter.js (Node.js EventEmitter)
+        ├── constants.js (business rules: cart limit, order lifecycle)
+        ├── sessions.js (revoke a user's stored sessions)
         └── helpers.js (utility functions)
 ```
 
@@ -91,12 +98,14 @@ online-food-ordering/
 ├── server.js                   # Entry point — full middleware stack
 ├── seed.js                     # Database seeder
 ├── package.json
+├── jest.config.js              # Test projects: unit + integration
 ├── .env                        # Environment variables (not committed)
 ├── .env.example
 ├── .gitignore
 │
 ├── config/
-│   └── db.js                   # MongoDB connection
+│   ├── db.js                   # MongoDB connection
+│   └── env.js                  # Reads + validates environment variables
 │
 ├── models/
 │   ├── User.js                 # bcrypt, embedded address, role
@@ -106,12 +115,12 @@ online-food-ordering/
 │   └── Order.js                # Price snapshots, embedded address, status enum
 │
 ├── routes/
-│   ├── authRoutes.js           # POST /api/auth/register|login|logout, GET /me
+│   ├── authRoutes.js           # POST /api/auth/register|login|logout, GET /me|csrf|demo-accounts
 │   ├── foodRoutes.js           # GET /api/foods, GET|POST|PUT|DELETE /api/foods/:id
 │   ├── categoryRoutes.js       # CRUD /api/categories
 │   ├── cartRoutes.js           # GET|POST|PUT|DELETE /api/cart
-│   ├── orderRoutes.js          # POST /api/orders, GET /api/orders, GET /api/orders/:id
-│   ├── adminRoutes.js          # Admin-only routes
+│   ├── orderRoutes.js          # POST /api/orders, GET /api/orders, GET /api/orders/:id, PUT /api/orders/:id/cancel
+│   ├── adminRoutes.js          # Admin-only routes (users incl. reactivate, orders, dashboard, CSV)
 │   └── userRoutes.js           # GET|PUT /api/users/profile
 │
 ├── controllers/
@@ -119,27 +128,39 @@ online-food-ordering/
 │   ├── foodController.js       # CRUD + search/filter/sort/pagination
 │   ├── categoryController.js   # CRUD + integrity check
 │   ├── cartController.js       # add/update/remove/clear
-│   ├── orderController.js      # placeOrder, getMyOrders, getOrderById
-│   ├── adminController.js      # dashboard, users, orders, CSV export (streams)
+│   ├── orderController.js      # placeOrder, getMyOrders, getOrderById, cancelOrder
+│   ├── adminController.js      # dashboard, users (delete/deactivate/reactivate), orders, CSV export (streams)
 │   └── userController.js       # getProfile, updateProfile
 │
 ├── middleware/
-│   ├── authMiddleware.js       # isAuthenticated (session check)
-│   ├── adminMiddleware.js      # isAdmin (role check)
+│   ├── authMiddleware.js       # isAuthenticated (session + live account check)
+│   ├── adminMiddleware.js      # isAdmin / isCustomer (role checks)
+│   ├── csrfMiddleware.js       # CSRF protection for state-changing /api requests
+│   ├── rateLimiters.js         # Rate limits (API, login, register, orders)
 │   ├── errorMiddleware.js      # notFound + global errorHandler
 │   └── validationMiddleware.js # express-validator rule sets
 │
 ├── services/
-│   ├── orderService.js         # createOrder (server-side price validation)
+│   ├── orderService.js         # createOrder (atomic cart claim), order lifecycle, cancel
 │   └── analyticsService.js     # getDashboardStats (aggregation pipelines)
 │
 ├── utils/
 │   ├── logger.js               # Async fs.appendFile logger
-│   ├── eventEmitter.js         # Custom EventEmitter with 5 event listeners
+│   ├── eventEmitter.js         # Custom EventEmitter with 6 event listeners
+│   ├── constants.js            # Cart limit, order statuses + allowed transitions
+│   ├── sessions.js             # revokeUserSessions (log a user out everywhere)
+│   ├── demoAccounts.js         # One-click demo logins (development only by default)
 │   └── helpers.js              # sendSuccess, sendError, calculateTotal, etc.
 │
 ├── logs/
 │   └── application.log         # Auto-generated application log
+│
+├── tests/
+│   ├── unit/                   # No database needed (models mocked)
+│   ├── frontend/               # The real pages run in jsdom
+│   ├── integration/            # Real MongoDB
+│   ├── helpers/                # Shared test helpers
+│   └── manual/csrf-attacker/   # A "hostile website" to try the CSRF protection by hand
 │
 └── public/
     ├── index.html              # Home page
@@ -182,6 +203,7 @@ online-food-ordering/
     "pincode": "String"
   },
   "role": "String (enum: customer|admin)",
+  "isActive": "Boolean (default: true; false = deactivated by an admin, cannot log in)",
   "createdAt": "Date",
   "updatedAt": "Date"
 }
@@ -259,9 +281,17 @@ online-food-ordering/
 
 ## API Endpoints
 
+Every response uses the same envelope: `{ "success": true|false, "message": "...", "data": ... }`.
+
+**Writes need three things** (POST / PUT / PATCH / DELETE under `/api`; see [Security](#security)):
+a JSON body with `Content-Type: application/json`, the session cookie, and the header `X-CSRF-Token`
+(get it from `GET /api/auth/csrf`; fetch a new one after every login). Only reads (GET) need none of these.
+
 ### Authentication
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
+| GET | /api/auth/csrf | Public | CSRF token for the current session (`data.csrfToken`) |
+| GET | /api/auth/demo-accounts | Public | Demo logins (404 unless `ENABLE_DEMO_LOGIN`; on in development by default) |
 | POST | /api/auth/register | Public | Register user |
 | POST | /api/auth/login | Public | Login + create session |
 | POST | /api/auth/logout | Auth | Destroy session |
@@ -299,16 +329,18 @@ online-food-ordering/
 |--------|----------|------|-------------|
 | POST | /api/orders | Auth | Place order |
 | GET | /api/orders | Auth | Order history |
-| GET | /api/orders/:id | Auth | Order details |
+| GET | /api/orders/:id | Auth | Order details (owner or admin) |
+| PUT | /api/orders/:id/cancel | Customer | Cancel your own order — owner only, **Pending** only (admins: 403, use the admin endpoint) |
 
 ### Admin
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | GET | /api/admin/dashboard | Admin | Dashboard stats (aggregation) |
 | GET | /api/admin/users | Admin | All users |
-| DELETE | /api/admin/users/:id | Admin | Delete user |
+| DELETE | /api/admin/users/:id | Admin | Delete a user with no orders; **deactivate** one who has orders (history kept) |
+| PUT | /api/admin/users/:id/reactivate | Admin | Reactivate a deactivated user (404 unknown, 409 already active) |
 | GET | /api/admin/orders | Admin | All orders |
-| PUT | /api/admin/orders/:id/status | Admin | Update order status |
+| PUT | /api/admin/orders/:id/status | Admin | Change order status (legal lifecycle steps only; 409 otherwise) |
 | GET | /api/admin/export/orders | Admin | Export CSV (streams) |
 
 ### Users
@@ -317,37 +349,65 @@ online-food-ordering/
 | GET | /api/users/profile | Auth | View profile |
 | PUT | /api/users/profile | Auth | Update profile |
 
+### Other
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /api/health | Public | Health check |
+
+---
+
+## Order Lifecycle
+
+Defined once in `utils/constants.js` (`ORDER_TRANSITIONS`); the admin page mirrors it and a test keeps the two identical.
+
+| From | Allowed next status |
+|------|---------------------|
+| Pending | Confirmed, Cancelled |
+| Confirmed | Preparing, Cancelled |
+| Preparing | Out for Delivery, Cancelled |
+| Out for Delivery | Delivered |
+| Delivered | — (final) |
+| Cancelled | — (final) |
+
+- Any other change is refused with **409**. Status changes are atomic (the expected current status is part of the update filter), so two simultaneous changes cannot both win.
+- A customer can cancel only their **own Pending** order (`PUT /api/orders/:id/cancel`); admins use `PUT /api/admin/orders/:id/status`.
+- Cancelled orders do not count towards revenue, average order value, popular foods, top spenders or revenue-by-date on the dashboard (they still appear in the order count and the per-status counts).
+- Placing an order claims the cart atomically, so pressing "Place order" twice creates exactly one order: a request that loses the race gets 409 ("already placed"); one that arrives after the cart was consumed gets 400 ("Your cart is empty").
+- If an order is placed at the very moment a cart is being changed, the cart request answers **409** ("Your cart was just checked out…").
+
 ---
 
 ## Authentication Mechanism
 
-1. **Registration**: User data validated → email uniqueness checked → password bcrypt hashed via Mongoose pre-save hook → user saved → 201 response
-2. **Login**: Email/password received → user fetched with `select('+password')` → bcrypt.compare() → session created with `req.session.userId` and `req.session.role` → session stored in MongoDB via connect-mongo
-3. **Session validation**: Every protected route passes through `isAuthenticated` middleware which checks `req.session.userId`
-4. **Admin authorization**: Admin routes additionally pass through `isAdmin` middleware which checks `req.session.role === 'admin'`
-5. **Logout**: `req.session.destroy()` → `res.clearCookie('foodiehub.sid')`
+1. **Registration**: user data validated → email uniqueness checked → password bcrypt hashed via Mongoose pre-save hook → user saved → 201 response
+2. **Login**: email/password validated → user fetched with `select('+password')` → `bcrypt.compare()` → a **deactivated** account is refused with 403 → the session id is regenerated (session-fixation defence) → `req.session.userId` / `role` stored → session kept in MongoDB via connect-mongo
+3. **Session validation**: every protected route passes through `isAuthenticated`, which checks `req.session.userId` **and re-reads the user from MongoDB** (role + `isActive`). A deleted or deactivated user's session is destroyed (401); a promoted/demoted user's new role applies immediately.
+4. **Authorization**: `isAdmin` for admin routes; `isCustomer` for customer-only actions (cancelling an order). Both fail closed.
+5. **CSRF**: every state-changing `/api` request must pass three checks — Origin, JSON content type, and the `X-CSRF-Token` header matching the secret in the session.
+6. **Logout**: `req.session.destroy()` → `res.clearCookie('foodiehub.sid')`
 
 ---
 
 ## Middleware Stack (in order)
 
 ```javascript
-app.use(helmet())              // 1. Security headers
-app.use(cors())                // 2. CORS
-app.use(morgan('dev'))         // 3. HTTP request logging
-app.use(express.json())        // 4. Parse JSON bodies
-app.use(express.urlencoded())  // 5. Parse form data
-app.use(session({...}))        // 6. Session management (MongoDB store)
-app.use(express.static())      // 7. Serve frontend files
-app.use('/api/...')            // 8. Route handlers
-app.use(notFound)              // 9. 404 handler
-app.use(errorHandler)          // 10. Global error handler
+app.use(helmet())                       // 1. Security headers
+app.use(cors({ origin: CORS_ORIGINS }))  // 2. CORS — off unless CORS_ORIGINS lists origins
+app.use(morgan(...))                    // 3. HTTP request logging (not in tests)
+app.use(express.static())               // 4. Serve frontend files (before the session)
+app.use(express.json({ limit: '100kb' }))// 5. Parse JSON bodies (form bodies are not parsed)
+app.use(session({...}))                 // 6. Session management (MongoDB store)
+app.use('/api', rateLimiters...)        // 7. Rate limits: API, login, register, orders
+app.use('/api', csrfProtection)         // 8. CSRF: origin + JSON + token on writes
+app.use('/api/...')                     // 9. Route handlers
+app.use(notFound)                       // 10. 404 handler
+app.use(errorHandler)                   // 11. Global error handler
 ```
 
 Custom route-level middleware:
-- `isAuthenticated` — session validation
-- `isAdmin` — role verification
-- `validateRegister`, `validateLogin`, `validateFood`, etc. — input validation
+- `isAuthenticated` — session validation (with the live account check)
+- `isAdmin` / `isCustomer` — role verification
+- `validateRegister`, `validateLogin`, `validateFood`, `validateIdParam`, etc. — input validation
 
 ---
 
@@ -376,23 +436,25 @@ Location: `services/analyticsService.js`
 
 ### getDashboardStats()
 ```javascript
-// 1. Total orders and revenue
-Order.aggregate([{ $group: { _id: null, totalOrders: {$sum:1}, totalRevenue: {$sum:'$totalAmount'} } }])
+// 1. Total orders (all) and revenue / average order value (Cancelled orders excluded)
+Order.aggregate([{ $group: { _id: null, totalOrders: {$sum:1} } }])
+Order.aggregate([{ $match: { orderStatus: { $ne: 'Cancelled' } } }, { $group: { _id: null, totalRevenue: {$sum:'$totalAmount'}, avgOrderValue: {$avg:'$totalAmount'} } }])
 
 // 2. Orders grouped by status
 Order.aggregate([{ $group: { _id: '$orderStatus', count: {$sum:1} } }, { $sort: {count:-1} }])
 
-// 3. Popular foods (unwind items)
+// 3. Popular foods (unwind items; Cancelled orders excluded)
 Order.aggregate([
+  { $match: { orderStatus: { $ne: 'Cancelled' } } },
   { $unwind: '$items' },
   { $group: { _id: '$items.food', foodName: {$first:'$items.foodName'}, totalOrdered: {$sum:'$items.quantity'} } },
   { $sort: { totalOrdered: -1 } },
   { $limit: 5 }
 ])
 
-// 4. Revenue by date (last 7 days)
+// 4. Revenue by date (last 7 days; Cancelled orders excluded)
 Order.aggregate([
-  { $match: { createdAt: { $gte: sevenDaysAgo } } },
+  { $match: { createdAt: { $gte: sevenDaysAgo }, orderStatus: { $ne: 'Cancelled' } } },
   { $group: { _id: { $dateToString: {format:'%Y-%m-%d', date:'$createdAt'} }, revenue: {$sum:'$totalAmount'} } }
 ])
 ```
@@ -454,12 +516,20 @@ npm run dev
 
 ## Environment Variables
 
-```env
-PORT=5000
-MONGO_URI=mongodb://127.0.0.1:27017/online_food_ordering
-SESSION_SECRET=replace_with_a_strong_random_secret
-NODE_ENV=development
-```
+Copy `.env.example` to `.env`. The server validates everything at startup (`config/env.js`): in production it refuses to start on a problem, in development it warns.
+
+| Variable | Required | Meaning |
+|----------|----------|---------|
+| `PORT` | no | Port to listen on. Default `5000` |
+| `MONGO_URI` | **yes** | MongoDB connection string (`mongodb://` or `mongodb+srv://`). The server starts listening only after MongoDB is connected |
+| `NODE_ENV` | no | `development` (default), `production` or `test`. Anything else is rejected, so a typo cannot silently disable production protections |
+| `SESSION_SECRET` | production | Signs the session cookie; **≥ 32 random characters** in production. In development a random one is generated per run if it is missing |
+| `CORS_ORIGINS` | no | Comma-separated extra origins allowed to call the API from a browser. Default: none (the pages are served by this same server). Also list your public origin if a proxy rewrites the `Host` header |
+| `TRUST_PROXY` | no | Number of reverse proxies in front of the app (for client IPs and secure cookies) |
+| `COOKIE_SECURE` | no | HTTPS-only session cookie. Default: on in production, off otherwise |
+| `RATE_LIMIT_DISABLED` | no | `true` turns rate limiting off (local load testing only) |
+| `ENABLE_DEMO_LOGIN` | no | One-click demo buttons on the login page. Default: on in development, **off in production** |
+| `ALLOW_SEED_IN_PRODUCTION` | no | `npm run seed` erases the database, so it refuses to run in production unless this is `true` |
 
 ---
 
@@ -473,6 +543,21 @@ npm run seed   # Seed the database
 
 Server: http://localhost:5000
 API Health: http://localhost:5000/api/health
+
+---
+
+## Testing
+
+```bash
+npm test                  # unit + frontend tests — no database needed
+npm run test:integration  # integration tests against a REAL MongoDB
+npm run test:all          # both
+```
+
+- **Unit / frontend** (`tests/unit`, `tests/frontend`): the database models are mocked and the real HTML pages run in jsdom. They prove which queries run and how every response looks, but **not** MongoDB's own behaviour (atomic updates, unique indexes, aggregation).
+- **Integration** (`tests/integration`): the real app against a real MongoDB, in a separate database named `foodiehub_integration_test` that is wiped between tests — your own data is never touched. Point it at a server with `MONGO_TEST_URI=mongodb://127.0.0.1:27017`; if it is not set, `mongodb-memory-server` downloads a throw-away `mongod` on first use (needs internet access).
+- Set `DEBUG_TEST_DB=1` to print which database the integration tests use (and per-round timings of the cart race test).
+- `tests/manual/csrf-attacker/` is a small "hostile website" you can open in a browser to see the CSRF protection refuse a forged request (see the README in that folder).
 
 ---
 
@@ -501,10 +586,19 @@ This will:
 
 ## Postman Testing
 
-Import the following requests into Postman:
+The API uses a **session cookie** (not JWT) and **CSRF protection**, so a write request in Postman needs three things:
+
+1. **Cookies**: leave Postman's cookie jar on, so the session cookie is sent back automatically.
+2. **A CSRF token**: `GET http://localhost:5000/api/auth/csrf` → copy `data.csrfToken`. Send it on every write as the header `X-CSRF-Token: <token>`. **Fetch a new token after logging in** (login starts a new session, which has its own token).
+3. **JSON**: `Content-Type: application/json` on requests with a body.
+
+Without the token a write is refused with **403**; a form-encoded body gets **415**. GET requests need none of this.
+
+Typical flow: `GET /api/auth/csrf` → `POST /api/auth/login` (with the token) → `GET /api/auth/csrf` again → everything else.
 
 ### Authentication
 ```
+GET    http://localhost:5000/api/auth/csrf
 POST   http://localhost:5000/api/auth/register
 POST   http://localhost:5000/api/auth/login
 GET    http://localhost:5000/api/auth/me
@@ -532,21 +626,22 @@ DELETE http://localhost:5000/api/cart/clear
 
 ### Orders (must be logged in)
 ```
-POST   http://localhost:5000/api/orders     Body: {deliveryAddress:{...}, paymentMethod:"Cash on Delivery"}
+POST   http://localhost:5000/api/orders     Body: {"deliveryAddress":{...}, "paymentMethod":"Cash on Delivery"}
 GET    http://localhost:5000/api/orders
 GET    http://localhost:5000/api/orders/<id>
+PUT    http://localhost:5000/api/orders/<id>/cancel     (customer, own Pending order; no body)
 ```
 
 ### Admin (must be logged in as admin)
 ```
 GET    http://localhost:5000/api/admin/dashboard
 GET    http://localhost:5000/api/admin/users
+DELETE http://localhost:5000/api/admin/users/<id>            (delete, or deactivate if the user has orders)
+PUT    http://localhost:5000/api/admin/users/<id>/reactivate (no body)
 GET    http://localhost:5000/api/admin/orders?status=Pending
-PUT    http://localhost:5000/api/admin/orders/<id>/status  Body: {"status":"Confirmed"}
+PUT    http://localhost:5000/api/admin/orders/<id>/status    Body: {"status":"Confirmed"}
 GET    http://localhost:5000/api/admin/export/orders
 ```
-
-> **Tip**: In Postman, enable "Automatically follow redirects" and set cookie handling to "Send cookies". The server uses session cookies (not JWT).
 
 ---
 
@@ -559,25 +654,29 @@ GET    http://localhost:5000/api/admin/export/orders
 | **Module 3** | Indexes, Aggregation, Mongoose, Schema Design | Text index on food name, compound indexes on orders. Aggregation in `analyticsService.js` with `$group`, `$unwind`, `$sort`, `$dateToString`. Full Mongoose schemas with validation, populate, timestamps. |
 | **Module 4** | Node.js Runtime, Filesystem, Async Operations | `utils/logger.js` uses `fs.appendFile()` (async, non-blocking). `fs.readFile()` demonstrated. All DB/FS operations use async/await. Logs written on every key event. |
 | **Module 5** | Modules, require/exports, JSON, EventEmitter, Streams | `require()` and `module.exports` throughout. Custom EventEmitter in `utils/eventEmitter.js`. Events: `orderPlaced`, `userLoggedIn`, etc. Streams in `exportOrdersCSV()`: Readable → Transform → Writable. |
-| **Module 6** | npm, Dependencies, Node Architecture, Event Loop | `package.json` with `start`, `dev`, `seed` scripts. Production vs devDependencies. Non-blocking I/O throughout — no sync operations in request handlers. |
+| **Module 6** | npm, Dependencies, Node Architecture, Event Loop | `package.json` with `start`, `dev`, `seed`, `test` and `test:integration` scripts. Production vs devDependencies. Non-blocking I/O throughout — no sync operations in request handlers. |
 | **Module 7** | Express.js, Request/Response | Express app in `server.js`. `req.body`, `req.params`, `req.query`, `req.session`. JSON responses with status codes. Static file serving. |
-| **Module 8** | REST APIs, Routing, Route Parameters, HTTP Methods | 40+ REST endpoints. `router.get()`, `.post()`, `.put()`, `.delete()`. Route params `/:id`, `/:foodId`. Correct HTTP verbs and status codes (200, 201, 400, 401, 403, 404, 409, 500). |
-| **Module 9** | Middleware, CORS, Morgan, Helmet, Error Handling | Helmet (security headers), CORS (cross-origin), Morgan (HTTP logs), custom auth/admin/validation middleware. Centralized error handler in `errorMiddleware.js`. |
+| **Module 8** | REST APIs, Routing, Route Parameters, HTTP Methods | 35 REST endpoints. `router.get()`, `.post()`, `.put()`, `.delete()`. Route params `/:id`, `/:foodId`. Correct HTTP verbs and status codes (200, 201, 400, 401, 403, 404, 409, 500). |
+| **Module 9** | Middleware, CORS, Morgan, Helmet, Error Handling | Helmet (security headers), CORS (cross-origin), Morgan (HTTP logs), custom auth/admin/customer/CSRF/rate-limit/validation middleware. Centralized error handler in `errorMiddleware.js`. |
 | **Module 10** | Cookies, Sessions, Authentication, Flash Messages | `express-session` with MongoDB store. Session cookie `foodiehub.sid`. `req.session.userId`, `req.session.role`. bcrypt password hashing. Session-based flash messages (`req.session.flash`). Role-based authorization. |
 
 ---
 
 ## Security
 
-- Passwords stored with bcrypt (10 salt rounds) — never plaintext
-- Sessions stored in MongoDB via connect-mongo
-- Session cookie: `httpOnly: true` (XSS protection), `secure: true` in production
-- Helmet adds 11 security headers
-- CORS configured with `credentials: true`
-- Admin authorization verified on every server request
-- Price calculations done server-side only
-- Environment variables for all secrets
-- Stack traces never exposed to client in production
+- Passwords stored with bcrypt (10 salt rounds) — never plaintext; login takes the same time for unknown emails and wrong passwords
+- Sessions stored in MongoDB via connect-mongo; the session id is regenerated at login (session-fixation defence)
+- Session cookie: `httpOnly: true` (XSS protection), `secure: true` in production, `SameSite` set
+- **CSRF protection** on every state-changing `/api` request: Origin check + JSON-only bodies + a per-session `X-CSRF-Token` (none of the three relies on the others)
+- **Sessions are re-checked against the database on every request**: a deactivated or deleted account is logged out immediately, and a role change takes effect at once
+- Role checks (`isAdmin`, `isCustomer`) verified on every server request; admin-only and customer-only routes fail closed
+- **Rate limiting** (`express-rate-limit`): API-wide, login (per IP + email, and per IP), register, and order placement; answered with 429
+- Input validation on bodies **and** query strings (400 on bad input); search text is regex-escaped
+- Price calculations done server-side only; the cart total always uses the current price
+- Atomic database updates for the race-prone steps: adding to a cart, claiming a cart at checkout, order status changes, and reactivating a user
+- Helmet adds security headers; CORS is closed unless `CORS_ORIGINS` is set
+- Environment variables for all secrets; production refuses to start with a weak or missing `SESSION_SECRET`
+- Stack traces and internal error messages are never sent to the client in production
 
 ---
 
@@ -604,4 +703,6 @@ For this project, we use a local single-node MongoDB instance which provides str
 7. Coupon/discount system
 8. Delivery partner management
 9. PWA support for mobile
-10. Unit tests with Jest and Supertest
+10. Change-password endpoint (not implemented yet)
+11. Pagination of a customer's own order history
+12. Idempotency keys so a late duplicate checkout is reported as a duplicate rather than an empty cart

@@ -14,6 +14,7 @@ const { ORDER_STATUSES } = require("../utils/constants");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
 const { transitionOrderStatus } = require("../services/orderService"); // atomic status change + EventEmitter
 const { revokeUserSessions } = require("../utils/sessions");
+const logger = require("../utils/logger");
 
 /**
  * @route   GET /api/admin/dashboard
@@ -250,6 +251,45 @@ const deleteUser = async (req, res, next) => {
   }
 };
 
+/**
+ * @route   PUT /api/admin/users/:id/reactivate
+ * @desc    Undo a deactivation: the user can log in again (admin only)
+ * @access  Admin
+ * BTWA Module 2: findOneAndUpdate with the expected state in the filter (atomic)
+ *
+ * The counterpart of deleteUser, which DEACTIVATES (isActive:false) users who have placed orders.
+ * - Atomic: only a user who is currently isActive:false matches, so two admins clicking at once
+ *   cannot both "win" and a user who is already active is never touched.
+ * - Reads nothing from the request body: the role, password and every other field stay exactly as
+ *   they were (reactivating an admin gives that admin their admin role back — that is the point).
+ * - Does NOT bring back the old cart or sessions: deleteUser removed them on purpose, so the user
+ *   must log in again with their own password.
+ * Errors: 404 no such user · 409 the account is already active · 400 malformed id (route param check)
+ */
+const reactivateUser = async (req, res, next) => {
+  try {
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, isActive: false }, // only a deactivated account matches ({isActive:undefined} legacy docs are "active")
+      { $set: { isActive: true } },
+      { new: true }
+    );
+
+    if (!user) {
+      // Nothing matched: either there is no such user, or the account is already active.
+      const exists = await User.exists({ _id: req.params.id });
+      if (!exists) {
+        return sendError(res, 404, "User not found");
+      }
+      return sendError(res, 409, "This account is already active");
+    }
+
+    logger.info(`Admin ${req.session.userId} reactivated user ${user._id}`);
+    return sendSuccess(res, 200, "User reactivated. They can log in again.", sanitizeUser(user));
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getDashboard,
   getAllUsers,
@@ -257,4 +297,5 @@ module.exports = {
   updateOrderStatus,
   exportOrdersCSV,
   deleteUser,
+  reactivateUser,
 };

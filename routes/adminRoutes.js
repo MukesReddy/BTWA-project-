@@ -13,6 +13,7 @@ const {
   updateOrderStatus,
   exportOrdersCSV,
   deleteUser,
+  reactivateUser,
 } = require("../controllers/adminController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { isAdmin } = require("../middleware/adminMiddleware");
@@ -30,6 +31,7 @@ router.get("/dashboard", getDashboard);
 // User management
 router.get("/users", validateUserQuery, getAllUsers);
 router.delete("/users/:id", deleteUser);
+router.put("/users/:id/reactivate", reactivateUser); // undo a deactivation (see deleteUser)
 
 // Order management
 router.get("/orders", validateOrderQuery, getAllOrders);

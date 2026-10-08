@@ -56,6 +56,13 @@ const buildCartResponse = async (cart) => {
 };
 
 /**
+ * Reading the cart back after a successful write can find NO cart: an order placed at the same moment
+ * (two tabs, a double click) claims the cart atomically and deletes it (services/orderService.js).
+ * That is a conflict the customer can resolve by reviewing the cart, not a server fault — so 409, never a 500.
+ */
+const CART_CHECKED_OUT = "Your cart was just checked out. Please review your cart and try again.";
+
+/**
  * addItemToCart
  * Atomically adds `quantity` of a food to the user's cart.
  * Returns "added" or "limit" (would exceed MAX_CART_QUANTITY for that item).
@@ -162,6 +169,9 @@ const addToCart = async (req, res, next) => {
     }
 
     const cart = await Cart.findOne({ user: req.session.userId });
+    if (!cart) {
+      return sendError(res, 409, CART_CHECKED_OUT);
+    }
     return sendSuccess(res, 200, "Item added to cart", await buildCartResponse(cart));
   } catch (error) {
     next(error);
@@ -189,6 +199,9 @@ const updateCartItem = async (req, res, next) => {
     }
 
     const cart = await Cart.findOne({ user: req.session.userId });
+    if (!cart) {
+      return sendError(res, 409, CART_CHECKED_OUT);
+    }
     return sendSuccess(res, 200, "Cart updated", await buildCartResponse(cart));
   } catch (error) {
     next(error);
