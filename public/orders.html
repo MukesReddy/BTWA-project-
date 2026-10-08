@@ -36,8 +36,10 @@
   <script src="/js/main.js"></script>
   <script>
     // "Cancel Order" is offered only while the order is Pending (the server enforces the same rule).
+    let currentRole = null; // set in loadOrders(); only customer accounts may cancel (admins use the admin panel)
+
     function cancelButton(order) {
-      return canCustomerCancel(order.orderStatus)
+      return currentRole === 'customer' && canCustomerCancel(order.orderStatus)
         ? `<button class="btn btn-danger btn-sm" data-action="cancelOrder" data-id="${esc(order._id)}">Cancel Order</button>`
         : '';
     }
@@ -55,6 +57,8 @@
 
       const user = await fetchCurrentUser();
       if (!user) { window.location.href = '/login.html?redirect=/orders.html'; return; }
+
+      currentRole = user.role;
 
       const { ok, data } = await apiCall('GET', '/orders');
       if (!ok) { content.innerHTML = '<p class="text-center text-muted">Error loading orders.</p>'; return; }
@@ -177,7 +181,7 @@
             ${esc(order.deliveryAddress?.state)} — ${esc(order.deliveryAddress?.pincode)}
           </div>
         </div>
-        ${canCustomerCancel(order.orderStatus) ? `<div style="margin-top:1.5rem;text-align:right">${cancelButton(order)}</div>` : ''}`;
+        ${cancelButton(order) ? `<div style="margin-top:1.5rem;text-align:right">${cancelButton(order)}</div>` : ''}`;
     }
 
     function closeModal() {

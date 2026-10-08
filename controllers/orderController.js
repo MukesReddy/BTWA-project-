@@ -89,8 +89,9 @@ const getOrderById = async (req, res, next) => {
 /**
  * @route   PUT /api/orders/:id/cancel
  * @desc    Cancel one of the logged-in user's own orders (only while it is still Pending)
- * @access  Authenticated owner (403 for anyone else, admins included — they use the admin route)
- * Errors: 404 no such order · 403 not yours · 409 no longer Pending (or an admin moved it first)
+ * @access  Authenticated CUSTOMER who owns the order (isCustomer middleware: admin accounts always get
+ *          403, even for their own order — admins change order status via PUT /api/admin/orders/:id/status)
+ * Errors: 404 no such order · 403 not a customer / not yours · 409 no longer Pending (or an admin moved it first)
  * BTWA Module 5: EventEmitter ("orderStatusUpdated", emitted by orderService)
  */
 const cancelOrder = async (req, res, next) => {

@@ -5,6 +5,7 @@
 const mongoose = require("mongoose");
 const app = require("../../server");
 const Order = require("../../models/Order");
+const User = require("../../models/User");
 const emitter = require("../../utils/eventEmitter");
 const logger = require("../../utils/logger"); // jest-mocked for every test file (tests/helpers/setupAfterEnv.js)
 const { connectTestDb, clearTestDb, disconnectTestDb } = require("../helpers/db");
@@ -212,6 +213,29 @@ describe("B — PUT /api/orders/:id/cancel against the real database", () => {
   test("an admin cannot cancel a customer's order through the customer route (403)", async () => {
     const order = await makeOrder(owner, "Pending");
     expect((await customerCancel(order, adminAgent)).status).toBe(403);
+    expect(await statusOf(order)).toBe("Pending");
+  });
+
+  test("customer-only: an admin cannot use it even for an order the admin OWNS; the admin endpoint still can", async () => {
+    const order = await makeOrder(admin, "Pending");
+    const res = await customerCancel(order, adminAgent);
+    expect(res.status).toBe(403);
+    expect(res.body.message).toMatch(/customer accounts/i);
+    expect(await statusOf(order)).toBe("Pending"); // untouched in MongoDB
+    expect(statusEvents()).toEqual([]);
+
+    expect((await adminSet(order, "Cancelled")).status).toBe(200); // admins keep their own route
+    expect(await statusOf(order)).toBe("Cancelled");
+  });
+
+  test("role is checked against the database on each request: a customer promoted to admin mid-session is refused", async () => {
+    const promoted = await createUser();
+    const agent = await loginAgent(app, promoted);
+    const order = await makeOrder(promoted, "Pending");
+
+    await User.updateOne({ _id: promoted._id }, { $set: { role: "admin" } });
+
+    expect((await customerCancel(order, agent)).status).toBe(403);
     expect(await statusOf(order)).toBe("Pending");
   });
 

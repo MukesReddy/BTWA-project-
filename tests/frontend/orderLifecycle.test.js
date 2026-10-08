@@ -58,6 +58,19 @@ describe("orders.html — customer", () => {
     await closePage(window);
   });
 
+  test("an ADMIN account viewing orders.html is never offered Cancel Order (the route is customer-only)", async () => {
+    const page = await loadPage("/orders.html", {
+      user: admin,
+      routes: { "GET /api/orders": orders, [`GET /api/orders/${id(1)}`]: order(1, "Pending") },
+    });
+    await waitFor(() => page.document.querySelectorAll("[data-action=showOrderDetail]").length >= 6);
+    expect(cancelButtons(page.document)).toHaveLength(0);
+    page.window.showOrderDetail(id(1));
+    await waitFor(() => page.document.getElementById("modalBody").textContent.includes("Delivery Address"));
+    expect(page.document.getElementById("modalBody").querySelector('[data-action="cancelOrder"]')).toBeNull();
+    await closePage(page.window);
+  });
+
   test("the detail view of a Pending order offers Cancel; of a Confirmed order it does not", async () => {
     const page = await loadPage("/orders.html", {
       user: customer,

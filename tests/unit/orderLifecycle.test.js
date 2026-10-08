@@ -9,6 +9,7 @@ const app = require("../../server");
 const Order = require("../../models/Order");
 const User = require("../../models/User");
 const emitter = require("../../utils/eventEmitter");
+const { isCustomer } = require("../../middleware/adminMiddleware");
 const constants = require("../../utils/constants");
 const { getDashboardStats } = require("../../services/analyticsService");
 const { query } = require("../helpers/chain");
@@ -264,11 +265,47 @@ describe("B — PUT /api/orders/:id/cancel (customer self-cancel)", () => {
     expect(o.status).toBe(status);
   });
 
-  test("an admin cannot cancel a customer's order through the customer route → 403", async () => {
-    const admin = await loginAs(app, { role: "admin" });
-    const o = installOrder({ status: "Pending", owner: newId() });
-    expect((await admin.agent.put(`/api/orders/${o.id}/cancel`)).status).toBe(403);
-    expect(Order.findOneAndUpdate).not.toHaveBeenCalled();
+  describe("customer-only: admin accounts are refused, even for their OWN order", () => {
+    test("an admin who owns a Pending order → 403; the order is not even read, nothing is written", async () => {
+      const admin = await loginAs(app, { role: "admin" });
+      const o = installOrder({ status: "Pending", owner: admin.userId });
+      const res = await admin.agent.put(`/api/orders/${o.id}/cancel`);
+      expect(res.status).toBe(403);
+      expect(res.body.message).toMatch(/customer accounts/i);
+      expect(Order.findById).not.toHaveBeenCalled();
+      expect(Order.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(statusEvents()).toEqual([]);
+      expect(o.status).toBe("Pending");
+    });
+
+    test("an admin and a customer's order (not the owner) → 403 as well", async () => {
+      const admin = await loginAs(app, { role: "admin" });
+      const o = installOrder({ status: "Pending", owner: newId() });
+      expect((await admin.agent.put(`/api/orders/${o.id}/cancel`)).status).toBe(403);
+      expect(Order.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    test("the admin's own endpoint still works for that same admin-owned order (Pending → Cancelled)", async () => {
+      const admin = await loginAs(app, { role: "admin" });
+      const o = installOrder({ status: "Pending", owner: admin.userId });
+      expect((await admin.agent.put(`/api/admin/orders/${o.id}/status`).send({ status: "Cancelled" })).status).toBe(200);
+      expect(o.status).toBe("Cancelled");
+    });
+
+    test("role is re-read on every request: a customer promoted to admin is refused immediately", async () => {
+      const me = await loginAs(app, { role: "customer" });
+      const o = installOrder({ status: "Pending", owner: me.userId });
+      me.user.role = "admin"; // an admin promotes the account while the session is open
+      expect((await me.agent.put(`/api/orders/${o.id}/cancel`)).status).toBe(403);
+      expect(o.status).toBe("Pending");
+    });
+
+    test("an admin demoted to customer may use the customer route at once", async () => {
+      const me = await loginAs(app, { role: "admin" });
+      const o = installOrder({ status: "Pending", owner: me.userId });
+      me.user.role = "customer";
+      expect((await me.agent.put(`/api/orders/${o.id}/cancel`)).status).toBe(200);
+    });
   });
 
   test("an order whose owner no longer exists (user = null) → 403 for everyone", async () => {
@@ -330,6 +367,33 @@ describe("B — PUT /api/orders/:id/cancel (customer self-cancel)", () => {
 
     expect(Order.findOneAndUpdate).not.toHaveBeenCalled();
     expect(o.status).toBe("Pending");
+  });
+});
+
+describe("isCustomer middleware", () => {
+  const run = (session) => {
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+    isCustomer({ session }, res, next);
+    return { res, next };
+  };
+
+  test("customer → next()", () => {
+    const { next, res } = run({ role: "customer" });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  test.each([["admin"], [undefined], [null], [""], ["Customer"], ["superuser"]])("role %j → 403, next() not called (fails closed)", (role) => {
+    const { next, res } = run({ role });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  test("no session at all → 403", () => {
+    const { next, res } = run(undefined);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 });
 

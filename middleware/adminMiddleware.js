@@ -29,4 +29,18 @@ const isAdmin = (req, res, next) => {
   return sendError(res, 403, "Access denied. Admin privileges required.");
 };
 
-module.exports = { isAdmin };
+/**
+ * isCustomer middleware
+ * Must be used AFTER isAuthenticated middleware (which refreshes req.session.role from the database)
+ * Lets only a normal customer through. Fails closed: any other role, admins included, gets 403.
+ * Used for customer-only actions such as cancelling your own order; admins have their own
+ * admin endpoints for managing orders.
+ */
+const isCustomer = (req, res, next) => {
+  if (req.session && req.session.role === "customer") {
+    return next();
+  }
+  return sendError(res, 403, "This action is for customer accounts. Admins manage orders from the admin panel.");
+};
+
+module.exports = { isAdmin, isCustomer };
