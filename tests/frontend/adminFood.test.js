@@ -78,38 +78,48 @@ describe("admin-food.html — paging", () => {
     await closePage(page.window);
   });
 
-  test("if the page you are on becomes empty (its last food was deleted) it steps back to the new last page", async () => {
+  test("if the page you are on becomes empty (its last food was deleted) it steps back to the new LAST page", async () => {
     const requests = [];
-    const all = Array.from({ length: 21 }, (_v, i) => food(i + 1)); // page 2 holds exactly one food
+    const all = Array.from({ length: 41 }, (_v, i) => food(i + 1)); // page 3 holds exactly one food
     const page = await loadPage("/admin-food.html", {
       user: admin,
       routes: {
         "GET /api/categories": [],
         "GET /api/foods": pagedFoods(all, requests),
-        [`DELETE /api/foods/${id(21)}`]: () => { all.splice(20); return { status: 200, body: { success: true, message: "Food item deleted successfully" } }; },
+        [`DELETE /api/foods/${id(41)}`]: () => { all.splice(40); return { status: 200, body: { success: true, message: "Food item deleted successfully" } }; },
       },
     });
     await waitFor(() => names(page.document).length === 20);
-    click(page.window, pageButtons(page.document)[1]);
+    click(page.window, pageButtons(page.document)[2]);
     await waitFor(() => names(page.document).length === 1);
 
     click(page.window, page.document.querySelector('[data-action="deleteFood"]'));
     await waitFor(() => page.calls.some((c) => c.method === "DELETE"));
     await waitFor(() => requests.length >= 4);
-    await waitFor(() => names(page.document).length === 20);
+    await waitFor(() => names(page.document).length === 20 && names(page.document)[0] === "Food 21");
 
-    expect(requests.map((r) => r.page).slice(-2)).toEqual([2, 1]); // asked for page 2 (empty) → fell back to page 1
-    expect(pageButtons(page.document)).toHaveLength(0); // 20 foods left = one page, no pager
+    expect(requests.map((r) => r.page).slice(-2)).toEqual([3, 2]); // page 3 came back empty → page 2, NOT page 1
+    expect(pageButtons(page.document).map((b) => b.textContent)).toEqual(["1", "2"]);
+    expect(page.document.querySelector("#pagination .btn-primary").textContent).toBe("2");
     await closePage(page.window);
   });
 
   test("an API error shows the error text and no stale pager", async () => {
+    const all = Array.from({ length: 45 }, (_v, i) => food(i + 1));
+    const healthy = pagedFoods(all);
     const page = await loadPage("/admin-food.html", {
       user: admin,
-      routes: { "GET /api/categories": [], "GET /api/foods": { status: 500, body: { success: false, message: "boom" } } },
+      routes: {
+        "GET /api/categories": [],
+        "GET /api/foods": (body, url) => (new URL(url, "http://x").searchParams.get("page") === "2"
+          ? { status: 500, body: { success: false, message: "boom" } }
+          : healthy(body, url)),
+      },
     });
+    await waitFor(() => pageButtons(page.document).length === 3); // a real pager is on screen…
+    click(page.window, pageButtons(page.document)[1]);             // …then page 2 fails
     await waitFor(() => page.document.getElementById("foodTable").textContent.includes("Error loading foods"));
-    expect(page.document.getElementById("pagination").innerHTML).toBe("");
+    expect(page.document.getElementById("pagination").innerHTML).toBe(""); // …and must not linger
     await closePage(page.window);
   });
 
