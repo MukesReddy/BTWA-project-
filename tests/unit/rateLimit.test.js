@@ -103,6 +103,101 @@ describe("other limiters", () => {
   });
 });
 
+describe("password change: only FAILED attempts are throttled (Batch 5)", () => {
+  const CURRENT = "oldPass123";
+  const doc = (userId) => ({
+    _id: userId,
+    role: "customer",
+    comparePassword: jest.fn(async (candidate) => candidate === CURRENT),
+    save: jest.fn(async () => undefined),
+  });
+  const wrong = (agent) => agent.put("/api/users/password").send({ currentPassword: "guess-guess", newPassword: "brandNew456" });
+  const right = (agent, next) => agent.put("/api/users/password").send({ currentPassword: CURRENT, newPassword: next });
+  const mockAccount = () => {
+    jest.spyOn(User, "findById").mockImplementation((id) => query(doc(id)));
+    jest.spyOn(require("mongoose").connection, "collection").mockReturnValue({ deleteMany: jest.fn().mockResolvedValue({}) });
+  };
+
+  test("the 4th wrong current password is 429 (limit 3); the body names the limiter", async () => {
+    const app = appWith({ passwordChange: { limit: 3 } });
+    const { agent } = await loginAs(app);
+    mockAccount();
+
+    for (let i = 0; i < 3; i++) expect((await wrong(agent)).status).toBe(400);
+
+    const blocked = await wrong(agent);
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toMatchObject({ success: false, code: "RATE_LIMITED", limiter: "passwordChange" });
+    expect(blocked.body.message).toMatch(/too many failed password change attempts.*try again in \d+ minutes?/i);
+    expect(blocked.headers["retry-after"]).toBeDefined();
+  });
+
+  test("once blocked, even the CORRECT password is refused (a guesser cannot keep trying)", async () => {
+    const app = appWith({ passwordChange: { limit: 2 } });
+    const { agent } = await loginAs(app);
+    mockAccount();
+    await wrong(agent);
+    await wrong(agent);
+
+    const res = await right(agent, "brandNew456");
+    expect(res.status).toBe(429);
+    expect(User.findById).toHaveBeenCalledTimes(2); // the blocked request never reached the handler
+  });
+
+  test("SUCCESSFUL changes do NOT count toward the limit", async () => {
+    const app = appWith({ passwordChange: { limit: 2 } });
+    const { agent } = await loginAs(app);
+    mockAccount();
+    const { refreshCsrf } = require("../helpers/client");
+
+    for (let i = 0; i < 6; i++) {
+      const res = await right(agent, `brandNew45${i}`);
+      expect(res.status).toBe(200);
+      await refreshCsrf(agent); // the session id (and CSRF token) changes after every change
+    }
+  });
+
+  test("the limit is PER USER: one user being blocked does not block another", async () => {
+    const app = appWith({ passwordChange: { limit: 1 } });
+    const a = await loginAs(app);
+    const b = await loginAs(app);
+    mockAccount();
+
+    expect((await wrong(a.agent)).status).toBe(400);
+    expect((await wrong(a.agent)).status).toBe(429);
+    expect((await wrong(b.agent)).status).toBe(400); // own bucket
+  });
+
+  test("validation failures count as failed attempts (they are 400s on the same route)", async () => {
+    const app = appWith({ passwordChange: { limit: 2 } });
+    const { agent } = await loginAs(app);
+    mockAccount();
+    const bad = () => agent.put("/api/users/password").send({});
+
+    expect((await bad()).status).toBe(400);
+    expect((await bad()).status).toBe(400);
+    expect((await bad()).status).toBe(429);
+  });
+
+  test("it does not throttle other routes (profile update, cart) for the same user", async () => {
+    const app = appWith({ passwordChange: { limit: 1 }, api: { limit: 1000 } });
+    const { agent } = await loginAs(app);
+    mockAccount();
+    await wrong(agent);
+    expect((await wrong(agent)).status).toBe(429);
+
+    jest.spyOn(require("../../models/Cart"), "findOne").mockReturnValue(query(null));
+    expect((await agent.get("/api/cart")).status).toBe(200);
+  });
+
+  test("RATE_LIMIT_DISABLED=true switches this limiter off too", async () => {
+    const app = appWith({ passwordChange: { limit: 1 } }, { RATE_LIMIT_DISABLED: "true" });
+    const { agent } = await loginAs(app);
+    mockAccount();
+    for (let i = 0; i < 5; i++) expect((await wrong(agent)).status).toBe(400);
+  });
+});
+
 describe("configuration", () => {
   test("RATE_LIMIT_DISABLED=true switches every limiter off", async () => {
     const app = appWith({ api: { limit: 1 }, login: { limit: 1 } }, { RATE_LIMIT_DISABLED: "true" });
