@@ -82,6 +82,31 @@
           </div>
         </div>
 
+        <div class="card" style="margin-top:1.5rem">
+          <div class="card-header">
+            <h3 style="font-weight:700">🔒 Change Password</h3>
+          </div>
+          <div class="card-body">
+            <form id="passwordForm" autocomplete="off">
+              <div class="form-group">
+                <label class="form-label" for="currentPassword">Current password</label>
+                <input type="password" id="currentPassword" class="form-control" autocomplete="current-password" required />
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="newPassword">New password (6–72 characters)</label>
+                  <input type="password" id="newPassword" class="form-control" autocomplete="new-password" minlength="6" maxlength="72" required />
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="confirmPassword">Confirm new password</label>
+                  <input type="password" id="confirmPassword" class="form-control" autocomplete="new-password" minlength="6" maxlength="72" required />
+                </div>
+              </div>
+              <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:1rem">You stay signed in on this device. Every other device is signed out.</p>
+              <button type="submit" class="btn btn-primary" id="savePasswordBtn">🔒 Change Password</button>
+            </form>
+          </div>
+        </div>
         <div style="margin-top:1.5rem;display:flex;gap:1rem;flex-wrap:wrap">
           <a href="/orders.html" class="btn btn-outline">📋 My Orders</a>
           ${user.role === 'admin' ? `<a href="/admin.html" class="btn btn-ghost">⚙️ Admin Panel</a>` : ''}
@@ -119,6 +144,24 @@
         btn.disabled = false; btn.innerHTML = '💾 Save Address';
         if (ok) showToast('Address updated successfully', 'success');
         else showAlert('alertBox', data.message, 'error');
+      });
+      document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        // Checked here so a typo never costs a (rate-limited) server attempt; the server enforces the real rules.
+        if (newPassword !== confirmPassword) { showAlert('alertBox', 'New password and confirmation do not match', 'error'); return; }
+        const btn = document.getElementById('savePasswordBtn');
+        btn.disabled = true; btn.textContent = 'Changing…';
+        // Sent in the JSON body only (never in a URL); the CSRF header is added by apiCall.
+        const { ok, data } = await apiCall('PUT', '/users/password', { currentPassword, newPassword });
+        btn.disabled = false; btn.innerHTML = '🔒 Change Password';
+        if (ok) {
+          e.target.reset(); // do not leave passwords sitting in the form
+          clearAlert('alertBox'); // drop an earlier error
+          showToast(data.message || 'Password changed', 'success');
+        } else showAlert('alertBox', data.message, 'error');
       });
     }
 

@@ -166,6 +166,7 @@ const createApp = (appConfig = config, options = {}) => {
   app.post("/api/auth/login", limiters.login, limiters.loginPerIp);
   app.post("/api/auth/register", limiters.register);
   app.post("/api/orders", limiters.orders);
+  app.put("/api/users/password", limiters.passwordChange); // failed attempts only; per logged-in user
 
   // 8. CSRF protection for every state-changing /api request (origin + JSON-only + session token).
   // See middleware/csrfMiddleware.js for why SameSite and JSON-only are not enough on their own.

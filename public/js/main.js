@@ -76,8 +76,8 @@ async function apiCall(method, endpoint, body = null, alreadyRetried = false) {
     data = { success: false, message: 'Unexpected response from the server' };
   }
 
-  // Logging in or out replaces the server session, so the old token is dead.
-  if (endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/logout')) csrfToken = null;
+  // Logging in or out - and changing the password - replaces the server session, so the old token is dead.
+  if (endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/logout') || endpoint === '/users/password') csrfToken = null;
 
   // Token rejected (session expired / replaced in another tab): fetch a fresh one and retry once.
   if (writes && res.status === 403 && data && data.code === 'CSRF_TOKEN' && !alreadyRetried) {

@@ -15,6 +15,7 @@ const DEFAULT_LIMITS = Object.freeze({
   loginPerIp: { windowMs: 15 * MINUTE, limit: 30 },  // per IP: stops trying many accounts (credential stuffing)
   register: { windowMs: HOUR, limit: 10 },           // account-creation spam
   orders: { windowMs: 15 * MINUTE, limit: 20 },      // per logged-in user (IP if somehow anonymous)
+  passwordChange: { windowMs: 15 * MINUTE, limit: 5 }, // per logged-in user, FAILED attempts only: a stolen session cannot guess the current password
 });
 
 const passthrough = (req, res, next) => next();
@@ -49,11 +50,18 @@ const emailOf = (req) =>
  * createRateLimiters
  * @param {{enabled?: boolean, limits?: object}} options
  *        limits: partial overrides of DEFAULT_LIMITS (used by tests to use tiny numbers)
- * @returns {{api, login, loginPerIp, register, orders}} Express middleware
+ * @returns {{api, login, loginPerIp, register, orders, passwordChange}} Express middleware
  */
 const createRateLimiters = ({ enabled = true, limits = {} } = {}) => {
   if (!enabled) {
-    return { api: passthrough, login: passthrough, loginPerIp: passthrough, register: passthrough, orders: passthrough };
+    return {
+      api: passthrough,
+      login: passthrough,
+      loginPerIp: passthrough,
+      register: passthrough,
+      orders: passthrough,
+      passwordChange: passthrough,
+    };
   }
   const l = (key) => ({ ...DEFAULT_LIMITS[key], ...(limits[key] || {}) });
 
@@ -68,6 +76,10 @@ const createRateLimiters = ({ enabled = true, limits = {} } = {}) => {
     }),
     register: build("register", l("register"), "Too many accounts created from this network."),
     orders: build("orders", l("orders"), "You are placing orders too quickly.", {
+      keyGenerator: (req) => (req.session && req.session.userId ? `user:${req.session.userId}` : ipKeyGenerator(req.ip)),
+    }),
+    passwordChange: build("passwordChange", l("passwordChange"), "Too many failed password change attempts.", {
+      skipSuccessfulRequests: true, // a successful change does not count; only refused attempts do
       keyGenerator: (req) => (req.session && req.session.userId ? `user:${req.session.userId}` : ipKeyGenerator(req.ip)),
     }),
   };

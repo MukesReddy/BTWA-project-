@@ -187,6 +187,37 @@ const validateRegister = [
 ];
 
 /**
+ * Validate a password change.
+ * - currentPassword: only checked for being present text here; the real check is bcrypt in the controller.
+ * - newPassword: the SAME 6–72 rule as registration, and it must differ from the current one.
+ * Both must be plain strings (an array / object is rejected, never coerced).
+ */
+const validatePasswordChange = [
+  body("currentPassword")
+    .isString()
+    .withMessage("Current password is required")
+    .bail()
+    .notEmpty()
+    .withMessage("Current password is required")
+    .bail()
+    .isLength({ max: 72 }) // bcrypt only uses the first 72 bytes; no account can have a longer one
+    .withMessage("Current password is incorrect"),
+  body("newPassword")
+    .isString()
+    .withMessage("New password is required")
+    .bail()
+    .notEmpty()
+    .withMessage("New password is required")
+    .bail()
+    .isLength({ min: 6, max: 72 })
+    .withMessage("New password must be between 6 and 72 characters")
+    .bail()
+    .custom((value, { req }) => value !== req.body.currentPassword)
+    .withMessage("New password must be different from the current password"),
+  handleValidationErrors,
+];
+
+/**
  * Validate login fields
  */
 const validateLogin = [
@@ -418,6 +449,7 @@ module.exports = {
   validateCartUpdate,
   validateOrder,
   validateProfile,
+  validatePasswordChange,
   validateFoodQuery,
   validateUserQuery,
   validateOrderQuery,

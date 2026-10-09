@@ -75,8 +75,37 @@ const formatCurrency = (amount) => {
   return `₹${Number(amount).toFixed(2)}`;
 };
 
+/**
+ * Format one value as a CSV cell (RFC 4180) that is also safe to open in a spreadsheet.
+ *
+ * 1. QUOTING — a value containing a comma, double quote, CR or LF is wrapped in double quotes and its
+ *    inner quotes are doubled, so "Smith, John" stays ONE column instead of shifting every column after it.
+ * 2. FORMULA INJECTION — Excel / Sheets / LibreOffice run a cell that starts with = + - @ (or a tab / CR)
+ *    as a FORMULA. A customer chooses their own name, so {text: true} (use it for every user-controlled
+ *    value) prefixes such a cell with an apostrophe, which spreadsheets show as plain text.
+ *    Numbers, ids and dates are not user text, so they are left exactly as they are (a negative number
+ *    must stay a number).
+ * null / undefined become an empty cell.
+ * BTWA Module 5: used by the CSV export (streams)
+ *
+ * @param {*} value
+ * @param {{text?: boolean}} [options] text: true → neutralise a leading formula character
+ * @returns {string}
+ */
+const csvCell = (value, { text = false } = {}) => {
+  let cell = value === null || value === undefined ? "" : String(value);
+  if (text && /^[=+\-@\t\r]/.test(cell)) {
+    cell = `'${cell}`;
+  }
+  if (/[",\r\n]/.test(cell)) {
+    cell = `"${cell.replace(/"/g, '""')}"`;
+  }
+  return cell;
+};
+
 // BTWA Module 5: module.exports
 module.exports = {
+  csvCell,
   sendSuccess,
   sendError,
   calculateTotal,

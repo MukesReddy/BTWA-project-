@@ -9,7 +9,7 @@ const Order = require("../models/Order");
 const Food = require("../models/Food");
 const Cart = require("../models/Cart");
 const { getDashboardStats } = require("../services/analyticsService");
-const { sendSuccess, sendError, sanitizeUser, escapeRegex } = require("../utils/helpers");
+const { sendSuccess, sendError, sanitizeUser, escapeRegex, csvCell } = require("../utils/helpers");
 const { ORDER_STATUSES } = require("../utils/constants");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
 const { transitionOrderStatus } = require("../services/orderService"); // atomic status change + EventEmitter
@@ -177,15 +177,17 @@ const exportOrdersCSV = async (req, res, next) => {
           headerWritten = true;
         }
 
-        // Format each order as a CSV row
+        // Format each order as a CSV row (same 7 columns as the header).
+        // csvCell quotes values that need it, and {text:true} neutralises spreadsheet formulas in
+        // anything a user typed (name, email); see utils/helpers.js.
         const row = [
-          order._id.toString(),
-          order.user?.name || "N/A",
-          order.user?.email || "N/A",
-          `${order.totalAmount}`,
-          order.orderStatus,
-          order.paymentMethod,
-          new Date(order.createdAt).toLocaleDateString("en-IN"),
+          csvCell(order._id.toString()),
+          csvCell(order.user?.name || "N/A", { text: true }),
+          csvCell(order.user?.email || "N/A", { text: true }),
+          csvCell(order.totalAmount),
+          csvCell(order.orderStatus, { text: true }),
+          csvCell(order.paymentMethod, { text: true }),
+          csvCell(new Date(order.createdAt).toLocaleDateString("en-IN")),
         ].join(",") + "\n";
 
         this.push(row);

@@ -21,6 +21,7 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 - View order history and track order status
 - Cancel their own order while it is still **Pending**
 - Update profile and delivery address
+- Change their own password (other devices are signed out)
 
 ### Admin
 - Admin dashboard with real-time MongoDB aggregation statistics
@@ -29,7 +30,7 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 - View all users; delete a user, or **deactivate** one who has orders (order history is kept) and **reactivate** them later
 - View all orders with status filtering
 - Move orders through the lifecycle (only legal steps are accepted — see [Order Lifecycle](#order-lifecycle))
-- Export all orders as a CSV file (Node.js streams demo)
+- Export all orders as a CSV file (Node.js streams demo; values are quoted and spreadsheet formulas are neutralised)
 
 ---
 
@@ -121,7 +122,7 @@ online-food-ordering/
 │   ├── cartRoutes.js           # GET|POST|PUT|DELETE /api/cart
 │   ├── orderRoutes.js          # POST /api/orders, GET /api/orders, GET /api/orders/:id, PUT /api/orders/:id/cancel
 │   ├── adminRoutes.js          # Admin-only routes (users incl. reactivate, orders, dashboard, CSV)
-│   └── userRoutes.js           # GET|PUT /api/users/profile
+│   └── userRoutes.js           # GET|PUT /api/users/profile, PUT /api/users/password
 │
 ├── controllers/
 │   ├── authController.js       # register, login (session), logout, getMe
@@ -130,13 +131,13 @@ online-food-ordering/
 │   ├── cartController.js       # add/update/remove/clear
 │   ├── orderController.js      # placeOrder, getMyOrders, getOrderById, cancelOrder
 │   ├── adminController.js      # dashboard, users (delete/deactivate/reactivate), orders, CSV export (streams)
-│   └── userController.js       # getProfile, updateProfile
+│   └── userController.js       # getProfile, updateProfile, changePassword
 │
 ├── middleware/
 │   ├── authMiddleware.js       # isAuthenticated (session + live account check)
 │   ├── adminMiddleware.js      # isAdmin / isCustomer (role checks)
 │   ├── csrfMiddleware.js       # CSRF protection for state-changing /api requests
-│   ├── rateLimiters.js         # Rate limits (API, login, register, orders)
+│   ├── rateLimiters.js         # Rate limits (API, login, register, orders, password change)
 │   ├── errorMiddleware.js      # notFound + global errorHandler
 │   └── validationMiddleware.js # express-validator rule sets
 │
@@ -341,13 +342,14 @@ a JSON body with `Content-Type: application/json`, the session cookie, and the h
 | PUT | /api/admin/users/:id/reactivate | Admin | Reactivate a deactivated user (404 unknown, 409 already active) |
 | GET | /api/admin/orders | Admin | All orders |
 | PUT | /api/admin/orders/:id/status | Admin | Change order status (legal lifecycle steps only; 409 otherwise) |
-| GET | /api/admin/export/orders | Admin | Export CSV (streams) |
+| GET | /api/admin/export/orders | Admin | Export CSV (streams); values are quoted, and spreadsheet formulas in user-typed text are neutralised |
 
 ### Users
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | GET | /api/users/profile | Auth | View profile |
 | PUT | /api/users/profile | Auth | Update profile |
+| PUT | /api/users/password | Auth | Change your password (`currentPassword`, `newPassword` 6–72 chars). Wrong current password → 400; other devices are signed out; this one stays signed in |
 
 ### Other
 | Method | Endpoint | Auth | Description |
@@ -385,6 +387,7 @@ Defined once in `utils/constants.js` (`ORDER_TRANSITIONS`); the admin page mirro
 4. **Authorization**: `isAdmin` for admin routes; `isCustomer` for customer-only actions (cancelling an order). Both fail closed.
 5. **CSRF**: every state-changing `/api` request must pass three checks — Origin, JSON content type, and the `X-CSRF-Token` header matching the secret in the session.
 6. **Logout**: `req.session.destroy()` → `res.clearCookie('foodiehub.sid')`
+7. **Change password** (`PUT /api/users/password`): the current password must be right (bcrypt; wrong → 400, not 401, because 401 means "your session ended") → the new one (6–72 characters, different from the current) is hashed by the pre-save hook → **every stored session of the user is deleted** → this device gets a **new session id** and stays logged in. Failed attempts are rate-limited per user. Passwords are never logged or returned.
 
 ---
 
@@ -397,7 +400,7 @@ app.use(morgan(...))                    // 3. HTTP request logging (not in tests
 app.use(express.static())               // 4. Serve frontend files (before the session)
 app.use(express.json({ limit: '100kb' }))// 5. Parse JSON bodies (form bodies are not parsed)
 app.use(session({...}))                 // 6. Session management (MongoDB store)
-app.use('/api', rateLimiters...)        // 7. Rate limits: API, login, register, orders
+app.use('/api', rateLimiters...)        // 7. Rate limits: API, login, register, orders, password change
 app.use('/api', csrfProtection)         // 8. CSRF: origin + JSON + token on writes
 app.use('/api/...')                     // 9. Route handlers
 app.use(notFound)                       // 10. 404 handler
@@ -477,6 +480,7 @@ Order.aggregate([
 - `controllers/adminController.js` → `exportOrdersCSV()`
 - Flow: MongoDB data → **Readable stream** → **Transform stream** (CSV formatting) → **HTTP response** (Writable stream)
 - Uses `pipe()` to chain streams: `readable.pipe(transform).pipe(res)`
+- **The CSV is safe to open in a spreadsheet**: `csvCell()` (`utils/helpers.js`) quotes any value containing a comma, quote or line break (RFC 4180), and prefixes `'` to user-typed text that starts with `=`, `+`, `-`, `@`, tab or CR, because spreadsheets would otherwise run it as a formula (a customer chooses their own name). Numbers, ids and dates are left as they are.
 
 ### Async/Await (BTWA Module 4, 6)
 - All database operations use async/await
@@ -582,6 +586,8 @@ This will:
 | Customer | priya@example.com | password123 |
 | Customer | arun@example.com | password123 |
 
+> If you change a demo account's password through the app, the one-click demo login for that account stops working until you run `npm run seed` again.
+
 ---
 
 ## Postman Testing
@@ -632,6 +638,12 @@ GET    http://localhost:5000/api/orders/<id>
 PUT    http://localhost:5000/api/orders/<id>/cancel     (customer, own Pending order; no body)
 ```
 
+### Account (must be logged in)
+```
+PUT    http://localhost:5000/api/users/password   Body: {"currentPassword":"...","newPassword":"..."}
+```
+(After it succeeds your session id changes: fetch a new CSRF token with `GET /api/auth/csrf` before the next write.)
+
 ### Admin (must be logged in as admin)
 ```
 GET    http://localhost:5000/api/admin/dashboard
@@ -670,9 +682,11 @@ GET    http://localhost:5000/api/admin/export/orders
 - **CSRF protection** on every state-changing `/api` request: Origin check + JSON-only bodies + a per-session `X-CSRF-Token` (none of the three relies on the others)
 - **Sessions are re-checked against the database on every request**: a deactivated or deleted account is logged out immediately, and a role change takes effect at once
 - Role checks (`isAdmin`, `isCustomer`) verified on every server request; admin-only and customer-only routes fail closed
-- **Rate limiting** (`express-rate-limit`): API-wide, login (per IP + email, and per IP), register, and order placement; answered with 429
+- **Rate limiting** (`express-rate-limit`): API-wide, login (per IP + email, and per IP), register, order placement, and failed password-change attempts (per user); answered with 429
 - Input validation on bodies **and** query strings (400 on bad input); search text is regex-escaped
 - Price calculations done server-side only; the cart total always uses the current price
+- **Password change** needs the current password (a stolen session alone cannot take the account over), signs every other device out, issues a new session id for this one, and never logs or returns a password
+- **CSV export** quotes every value and neutralises spreadsheet formulas in user-typed text, so a hostile name cannot run code in an admin's spreadsheet or shift the columns
 - Atomic database updates for the race-prone steps: adding to a cart, claiming a cart at checkout, order status changes, and reactivating a user
 - Helmet adds security headers; CORS is closed unless `CORS_ORIGINS` is set
 - Environment variables for all secrets; production refuses to start with a weak or missing `SESSION_SECRET`
@@ -703,6 +717,5 @@ For this project, we use a local single-node MongoDB instance which provides str
 7. Coupon/discount system
 8. Delivery partner management
 9. PWA support for mobile
-10. Change-password endpoint (not implemented yet)
-11. Pagination of a customer's own order history
-12. Idempotency keys so a late duplicate checkout is reported as a duplicate rather than an empty cart
+10. Pagination of a customer's own order history
+11. Idempotency keys so a late duplicate checkout is reported as a duplicate rather than an empty cart

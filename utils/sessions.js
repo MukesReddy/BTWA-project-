@@ -37,4 +37,8 @@ const revokeUserSessions = async (userId) => {
   }
 };
 
-module.exports = { revokeUserSessions };
+/** Promise wrapper around req.session.regenerate: a brand-new session id (the old one is destroyed). */
+const regenerateSession = (req) =>
+  new Promise((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
+
+module.exports = { revokeUserSessions, regenerateSession };
