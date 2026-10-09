@@ -187,6 +187,11 @@ describe("GET /api/admin/export/orders", () => {
     expect(rows[1][6]).toBe(new Date("2026-03-04T10:00:00Z").toLocaleDateString("en-IN"));
   });
 
+  test("a negative total stays a number: only user-typed text is prefixed, system numbers are never altered", async () => {
+    const { rows } = await exportWith([order({ totalAmount: -5 })]);
+    expect(rows[1][3]).toBe("-5"); // a refund-style value must not become the text '-5
+  });
+
   test("it still STREAMS: more orders than one stream chunk come out complete and in order", async () => {
     const many = Array.from({ length: 500 }, (_v, i) => order({ totalAmount: i }));
     const { rows } = await exportWith(many);
