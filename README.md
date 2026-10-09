@@ -64,7 +64,7 @@ Express.js Server (server.js)
     │   ├── express.static (frontend files)
     │   ├── express.json() (JSON bodies only)
     │   ├── express-session (MongoDB store)
-    │   ├── rateLimiters (API, login, register, orders)
+    │   ├── rateLimiters (API, login, register, orders, password change)
     │   ├── csrfMiddleware (origin + JSON + X-CSRF-Token on writes)
     │   ├── authMiddleware (session auth, re-checked against the database)
     │   ├── adminMiddleware (isAdmin / isCustomer role checks)
@@ -95,7 +95,7 @@ Express.js Server (server.js)
 ## Folder Structure
 
 ```
-online-food-ordering/
+BTWA-project-/
 ├── server.js                   # Entry point — full middleware stack
 ├── seed.js                     # Database seeder
 ├── package.json
@@ -491,30 +491,54 @@ Order.aggregate([
 ## Installation
 
 ### Prerequisites
-- Node.js v18+ (tested on v24.19.0)
-- MongoDB running locally on port 27017
-- npm v8+
+- **Node.js v20.19 or newer** (v22 and v24 are fine; the session store `connect-mongo@6` needs 20.8+ and the test database helper needs 20.19+)
+- **MongoDB** (Community Server, a current version) reachable from your machine, by default `mongodb://127.0.0.1:27017`
+- npm v9+ (installed with Node)
+
+### MongoDB setup
+Any one of these works; the app only needs the connection string in `MONGO_URI`:
+- **Local server**: install MongoDB Community Server and make sure the service is running (on Windows it starts automatically as the "MongoDB" service; on Linux/macOS `mongod` or `brew services start mongodb-community`). Use `MONGO_URI=mongodb://127.0.0.1:27017/online_food_ordering`.
+- **MongoDB Atlas** (free tier): create a cluster, add your IP address to the access list, create a database user and copy the `mongodb+srv://…` string into `MONGO_URI`.
+
+The database and its collections are created automatically on first use; `npm run seed` fills them with sample data.
 
 ### Steps
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
-cd online-food-ordering
+git clone https://github.com/MukesReddy/BTWA-project-.git
+cd BTWA-project-
 
 # 2. Install dependencies
 npm install
 
 # 3. Configure environment
-cp .env.example .env
-# Edit .env with your values
+cp .env.example .env        # Windows (cmd): copy .env.example .env
+# Edit .env: at least check MONGO_URI. SESSION_SECRET may stay as it is in development
+# (a random one is used for each run and a warning is printed).
 
-# 4. Seed the database
+# 4. Seed the database (ERASES the existing data in that database, then inserts the sample data)
 npm run seed
 
 # 5. Start the development server
-npm run dev
+npm run dev                 # or: npm start
 ```
+
+Then open **http://localhost:5000**. Log in with the demo buttons on the login page (development only) or with the [credentials below](#default-credentials).
+
+### Quick tour (what to try)
+1. **Customer**: log in as `rahul@example.com` → Menu → add items → Cart → Checkout (Cash on Delivery) → *My Orders* → open the order, or **Cancel Order** while it is Pending. *Profile* lets you update your details and **change your password**.
+2. **Admin**: log in as `admin@foodiehub.com` → Dashboard (aggregation statistics) → *Orders*: move the order through Confirmed → Preparing → Out for Delivery → Delivered, or **Export CSV** → *Users*: deactivate / reactivate an account → *Foods* and *Categories*: add, edit, delete.
+
+### Troubleshooting
+| Symptom | Cause / fix |
+|---------|-------------|
+| `MongoDB Connection Error … ECONNREFUSED` and the process exits | MongoDB is not running, or `MONGO_URI` points to the wrong host/port. Start MongoDB and retry |
+| `Invalid configuration: - MONGO_URI is required` | `.env` is missing: run `cp .env.example .env` |
+| `Could not start the server: listen EADDRINUSE` | Port 5000 is taken. Set `PORT=5001` in `.env` |
+| Logged out every time the server restarts | `SESSION_SECRET` is not set, so a random one is generated per run. Set a real one in `.env` |
+| `429 Too many …` | A rate limit was hit (e.g. repeated wrong passwords). Wait for the time shown, or set `RATE_LIMIT_DISABLED=true` for local testing only |
+| Food images are broken | The sample images are hot-linked from Unsplash and need an internet connection |
 
 ---
 
@@ -559,7 +583,7 @@ npm run test:all          # both
 ```
 
 - **Unit / frontend** (`tests/unit`, `tests/frontend`): the database models are mocked and the real HTML pages run in jsdom. They prove which queries run and how every response looks, but **not** MongoDB's own behaviour (atomic updates, unique indexes, aggregation).
-- **Integration** (`tests/integration`): the real app against a real MongoDB, in a separate database named `foodiehub_integration_test` that is wiped between tests — your own data is never touched. Point it at a server with `MONGO_TEST_URI=mongodb://127.0.0.1:27017`; if it is not set, `mongodb-memory-server` downloads a throw-away `mongod` on first use (needs internet access).
+- **Integration** (`tests/integration`): the real app against a real MongoDB, in a separate database named `foodiehub_integration_test` that is wiped between tests — your own data is never touched. Point it at a server with `MONGO_TEST_URI=mongodb://127.0.0.1:27017`; if it is not set, `mongodb-memory-server` downloads a throw-away `mongod` on first use (needs internet access and Node 20.19+).
 - Set `DEBUG_TEST_DB=1` to print which database the integration tests use (and per-round timings of the cart race test).
 - `tests/manual/csrf-attacker/` is a small "hostile website" you can open in a browser to see the CSRF protection refuse a forged request (see the README in that folder).
 
@@ -668,7 +692,7 @@ GET    http://localhost:5000/api/admin/export/orders
 | **Module 5** | Modules, require/exports, JSON, EventEmitter, Streams | `require()` and `module.exports` throughout. Custom EventEmitter in `utils/eventEmitter.js`. Events: `orderPlaced`, `userLoggedIn`, etc. Streams in `exportOrdersCSV()`: Readable → Transform → Writable. |
 | **Module 6** | npm, Dependencies, Node Architecture, Event Loop | `package.json` with `start`, `dev`, `seed`, `test` and `test:integration` scripts. Production vs devDependencies. Non-blocking I/O throughout — no sync operations in request handlers. |
 | **Module 7** | Express.js, Request/Response | Express app in `server.js`. `req.body`, `req.params`, `req.query`, `req.session`. JSON responses with status codes. Static file serving. |
-| **Module 8** | REST APIs, Routing, Route Parameters, HTTP Methods | 35 REST endpoints. `router.get()`, `.post()`, `.put()`, `.delete()`. Route params `/:id`, `/:foodId`. Correct HTTP verbs and status codes (200, 201, 400, 401, 403, 404, 409, 500). |
+| **Module 8** | REST APIs, Routing, Route Parameters, HTTP Methods | 36 REST endpoints. `router.get()`, `.post()`, `.put()`, `.delete()`. Route params `/:id`, `/:foodId`. Correct HTTP verbs and status codes (200, 201, 400, 401, 403, 404, 409, 500). |
 | **Module 9** | Middleware, CORS, Morgan, Helmet, Error Handling | Helmet (security headers), CORS (cross-origin), Morgan (HTTP logs), custom auth/admin/customer/CSRF/rate-limit/validation middleware. Centralized error handler in `errorMiddleware.js`. |
 | **Module 10** | Cookies, Sessions, Authentication, Flash Messages | `express-session` with MongoDB store. Session cookie `foodiehub.sid`. `req.session.userId`, `req.session.role`. bcrypt password hashing. Session-based flash messages (`req.session.flash`). Role-based authorization. |
 
@@ -703,6 +727,23 @@ MongoDB falls under **CP** (Consistency + Partition Tolerance) in the CAP theore
 - **Partition Tolerance**: MongoDB can operate during network partitions but may delay writes until majority acknowledgment.
 
 For this project, we use a local single-node MongoDB instance which provides strong consistency. In production with replica sets, MongoDB allows configuration of read/write concerns to tune the C-A tradeoff.
+
+---
+
+## Known Limitations
+
+These are deliberate scope limits of a college project, not hidden bugs:
+
+- **Payments**: Cash on Delivery only; there is no payment gateway, tax, delivery fee or stock count (availability is a manual on/off switch per food).
+- **No e-mail / SMS and no "forgot password"**: a user who forgets their password cannot reset it themselves (a logged-in user can change it from *Profile*).
+- **Cancelling**: a customer can cancel only while the order is **Pending**; after that only an admin can cancel (up to *Preparing*).
+- **Not paginated**: a customer's own order history and the admin user list (the menu, admin food list and admin order list are paginated).
+- **Rate-limit counters live in the memory of one Node process**: they reset on restart and are not shared between several servers.
+- **Last admin**: an admin cannot delete themselves, but two admins who deactivate each other at the same instant would both be locked out; fix it by setting `isActive: true` on one of them in MongoDB (or re-run `npm run seed`, which erases all data).
+- **A late duplicate checkout** (a second "Place order" after the first finished) is answered with "Your cart is empty", not "already placed".
+- **Concurrent password changes** by the same user on two devices at the same instant: the last one wins.
+- **Tests**: the unit/frontend tests mock the database, so MongoDB's own behaviour (atomic updates, unique indexes, aggregation, the session store) is covered only by `npm run test:integration`, which needs a real MongoDB.
+- **Demo accounts** (login-page buttons, README credentials) exist for demonstration; the buttons are off in production unless `ENABLE_DEMO_LOGIN=true`.
 
 ---
 

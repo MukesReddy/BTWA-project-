@@ -274,6 +274,15 @@ describe("CSV export — real orders by users with hostile names", () => {
     });
   });
 
+  test("an export with NO orders is a valid CSV that contains just the header row", async () => {
+    const admin = await createUser({ role: "admin" });
+    const res = await (await loginAgent(app, admin)).get("/api/admin/export/orders");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/^text\/csv/);
+    expect(parseCsv(res.text)).toEqual([["Order ID", "User Name", "User Email", "Total Amount", "Status", "Payment Method", "Date"]]);
+  });
+
   test("the export is still admin-only", async () => {
     const customer = await createUser();
     const agent = await loginAgent(app, customer);

@@ -35,6 +35,7 @@
 
       <div id="alertBox" style="margin-bottom:1rem"></div>
       <div id="foodTable" class="loading-overlay"><div class="spinner"></div></div>
+      <div id="pagination" style="display:flex;justify-content:center;gap:.5rem;flex-wrap:wrap;margin-top:1.5rem"></div>
     </main>
   </div>
 
@@ -99,6 +100,10 @@
   <script>
     let editingFoodId = null;
     let categories = [];
+    // The API returns at most 50 foods per page, so the list is paged: with a single fixed request,
+    // every food after the first page could never be edited or deleted from this screen.
+    const PAGE_SIZE = 20;
+    let currentPage = 1;
 
     async function guardAdmin() {
       const user = await fetchCurrentUser();
@@ -115,12 +120,16 @@
       if (!await guardAdmin()) return;
       await loadCategories();
 
-      const { ok, data } = await apiCall('GET', '/foods?limit=50');
+      const { ok, data } = await apiCall('GET', `/foods?limit=${PAGE_SIZE}&page=${currentPage}`);
       const table = document.getElementById('foodTable');
-      if (!ok) { table.innerHTML = '<p class="text-muted text-center">Error loading foods.</p>'; return; }
+      const pager = document.getElementById('pagination');
+      if (!ok) { table.innerHTML = '<p class="text-muted text-center">Error loading foods.</p>'; pager.innerHTML = ''; return; }
 
-      const foods = data.data.foods;
-      if (!foods.length) { table.innerHTML = `<div class="empty-state"><div class="icon">🍔</div><h3>No food items</h3><button class="btn btn-primary" onclick="openAddModal()">Add First Food</button></div>`; return; }
+      const { foods, pagination } = data.data;
+      // The last food of the last page was just deleted: go back to the new last page.
+      if (!foods.length && currentPage > 1) { currentPage = Math.max(1, pagination.totalPages); return loadFoods(); }
+      if (!foods.length) {
+        pager.innerHTML = ''; table.innerHTML = `<div class="empty-state"><div class="icon">🍔</div><h3>No food items</h3><button class="btn btn-primary" onclick="openAddModal()">Add First Food</button></div>`; return; }
 
       table.innerHTML = `
         <div class="table-wrapper">
@@ -145,7 +154,13 @@
             </tbody>
           </table>
         </div>`;
+
+      pager.innerHTML = pagination.totalPages <= 1 ? '' : Array.from({ length: pagination.totalPages }, (_, i) => `
+        <button class="btn ${i + 1 === pagination.page ? 'btn-primary' : 'btn-ghost'} btn-sm" data-action="changePage" data-page="${i + 1}">${i + 1}</button>
+      `).join('');
     }
+
+    function changePage(page) { currentPage = page; loadFoods(); }
 
     function openAddModal() {
       editingFoodId = null;
@@ -243,7 +258,8 @@
 
     registerActions({
       editFood:   (data) => editFood(data.id),
-      deleteFood: (data) => deleteFood(data.id, data.name)
+      deleteFood: (data) => deleteFood(data.id, data.name),
+      changePage: (data) => changePage(Number(data.page))
     });
 
     document.addEventListener('DOMContentLoaded', loadFoods);

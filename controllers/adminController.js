@@ -166,14 +166,14 @@ const exportOrdersCSV = async (req, res, next) => {
 
     // ── BTWA Module 5: Transform Stream ─────────────────────────────────────
     // Transform each order object into a CSV row
+    const CSV_HEADER = "Order ID,User Name,User Email,Total Amount,Status,Payment Method,Date\n";
     let headerWritten = false;
     const transform = new Transform({
       objectMode: true,
       transform(order, encoding, callback) {
         // Write CSV header on first item
         if (!headerWritten) {
-          const header = "Order ID,User Name,User Email,Total Amount,Status,Payment Method,Date\n";
-          this.push(header);
+          this.push(CSV_HEADER);
           headerWritten = true;
         }
 
@@ -191,6 +191,15 @@ const exportOrdersCSV = async (req, res, next) => {
         ].join(",") + "\n";
 
         this.push(row);
+        callback();
+      },
+      // No orders at all → the transform() above never ran, so without this the admin would download a
+      // completely empty file. flush() runs once when the input ends: write the header if nothing did.
+      flush(callback) {
+        if (!headerWritten) {
+          this.push(CSV_HEADER);
+          headerWritten = true;
+        }
         callback();
       },
     });

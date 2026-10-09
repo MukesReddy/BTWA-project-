@@ -187,6 +187,19 @@ describe("GET /api/admin/export/orders", () => {
     expect(rows[1][6]).toBe(new Date("2026-03-04T10:00:00Z").toLocaleDateString("en-IN"));
   });
 
+  test("NO orders at all still downloads a valid CSV: just the header row (not an empty file)", async () => {
+    const { res, rows } = await exportWith([]);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/^text\/csv/);
+    expect(res.text).toBe("Order ID,User Name,User Email,Total Amount,Status,Payment Method,Date\n");
+    expect(rows).toEqual([HEADER]);
+  });
+
+  test("the header appears exactly once however many orders there are", async () => {
+    const { res } = await exportWith([order(), order(), order()]);
+    expect(res.text.match(/^Order ID,/gm)).toHaveLength(1);
+  });
+
   test("a negative total stays a number: only user-typed text is prefixed, system numbers are never altered", async () => {
     const { rows } = await exportWith([order({ totalAmount: -5 })]);
     expect(rows[1][3]).toBe("-5"); // a refund-style value must not become the text '-5

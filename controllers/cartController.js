@@ -239,7 +239,7 @@ const removeCartItem = async (req, res, next) => {
 
 
 /**
- * @route   DELETE /api/cart
+ * @route   DELETE /api/cart/clear
  * @desc    Clear the entire cart
  * @access  Authenticated
  */
