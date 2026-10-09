@@ -181,6 +181,20 @@ describe("3 · an amount sent by the browser is ignored", () => {
   );
 });
 
+describe("3b · the payee can never be chosen by the browser", () => {
+  test("upiId / pa / payee / payeeName in the request body are ignored: the QR always pays the configured merchant", async () => {
+    setupCart();
+    const { agent } = await loginAs(app);
+    const res = await agent.post("/api/payments/upi").send({
+      deliveryAddress: address, upiId: "attacker@bank", pa: "attacker@bank", payee: { upiId: "attacker@bank", name: "Evil" }, payeeName: "Evil", pn: "Evil", tr: "FHFFFFFFFFFFFFFFFF",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.upiUri).toContain("pa=shop@okicici&pn=FoodieHub%20Test&");
+    expect(res.body.data.upiUri).not.toMatch(/attacker|Evil|FHFFFF/);
+    expect(res.body.data.payee).toEqual({ name: "FoodieHub Test", upiId: "shop@okicici" });
+  });
+});
+
 describe("4 · authentication and validation", () => {
   test("without a login: 401 for every payment route, and no order or cart is touched", async () => {
     const { claim, create } = setupCart();
