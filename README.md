@@ -17,7 +17,7 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 - Register and login with bcrypt-hashed passwords
 - Browse food with search, filter by category/price/availability, and sort
 - Add food to cart, update quantities, and remove items
-- Place orders with delivery address and cash-on-delivery payment
+- Place orders with a delivery address and pay by **Cash on Delivery** or **online UPI QR** (see [UPI QR payments](#upi-qr-payments))
 - View order history and track order status
 - Cancel their own order while it is still **Pending**
 - Update profile and delivery address
@@ -30,6 +30,7 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 - View all users; delete a user, or **deactivate** one who has orders (order history is kept) and **reactivate** them later
 - View all orders with status filtering
 - Move orders through the lifecycle (only legal steps are accepted — see [Order Lifecycle](#order-lifecycle))
+- Confirm or reject an online UPI payment after checking the bank statement (bank reference required)
 - Export all orders as a CSV file (Node.js streams demo; values are quoted and spreadsheet formulas are neutralised)
 
 ---
@@ -44,6 +45,7 @@ Customers can browse food, search and filter the menu, add items to a cart, plac
 | Frontend | HTML5, CSS3, Vanilla JavaScript |
 | Middleware | Helmet, CORS, Morgan, express-validator, express-rate-limit |
 | Session Store | connect-mongo (sessions in MongoDB) |
+| Payments | `qrcode` (draws the UPI QR); payment confirmation is signed-webhook or admin-verified, see [UPI QR payments](#upi-qr-payments) |
 | Dev Tools | nodemon, dotenv |
 | Testing | Jest, supertest, jsdom (see [Testing](#testing)) |
 
@@ -101,7 +103,7 @@ BTWA-project-/
 ├── package.json
 ├── jest.config.js              # Test projects: unit + integration
 ├── .env                        # Environment variables (not committed)
-├── .env.example
+├── .env.example                # placeholders only (including UPI_* and PAYMENT_WEBHOOK_SECRET)
 ├── .gitignore
 │
 ├── config/
@@ -120,6 +122,7 @@ BTWA-project-/
 │   ├── foodRoutes.js           # GET /api/foods, GET|POST|PUT|DELETE /api/foods/:id
 │   ├── categoryRoutes.js       # CRUD /api/categories
 │   ├── cartRoutes.js           # GET|POST|PUT|DELETE /api/cart
+│   ├── paymentRoutes.js        # /api/payments (methods, upi, status; the webhook is registered in server.js)
 │   ├── orderRoutes.js          # POST /api/orders, GET /api/orders, GET /api/orders/:id, PUT /api/orders/:id/cancel
 │   ├── adminRoutes.js          # Admin-only routes (users incl. reactivate, orders, dashboard, CSV)
 │   └── userRoutes.js           # GET|PUT /api/users/profile, PUT /api/users/password
@@ -130,6 +133,7 @@ BTWA-project-/
 │   ├── categoryController.js   # CRUD + integrity check
 │   ├── cartController.js       # add/update/remove/clear
 │   ├── orderController.js      # placeOrder, getMyOrders, getOrderById, cancelOrder
+│   ├── paymentController.js    # payment methods, start UPI payment, status, webhook
 │   ├── adminController.js      # dashboard, users (delete/deactivate/reactivate), orders, CSV export (streams)
 │   └── userController.js       # getProfile, updateProfile, changePassword
 │
@@ -143,12 +147,14 @@ BTWA-project-/
 │
 ├── services/
 │   ├── orderService.js         # createOrder (atomic cart claim), order lifecycle, cancel
+│   ├── paymentService.js       # UPI QR payments: start, status, expiry, verified result (webhook/admin)
 │   └── analyticsService.js     # getDashboardStats (aggregation pipelines)
 │
 ├── utils/
 │   ├── logger.js               # Async fs.appendFile logger
 │   ├── eventEmitter.js         # Custom EventEmitter with 6 event listeners
 │   ├── constants.js            # Cart limit, order statuses + allowed transitions
+│   ├── upi.js                  # UPI link + QR picture, paise maths, payment reference
 │   ├── sessions.js             # revokeUserSessions (log a user out everywhere)
 │   ├── demoAccounts.js         # One-click demo logins (development only by default)
 │   └── helpers.js              # sendSuccess, sendError, calculateTotal, etc.
@@ -271,7 +277,13 @@ BTWA-project-/
     "state": "String",
     "pincode": "String"
   },
-  "paymentMethod": "String (enum: Cash on Delivery)",
+  "paymentMethod": "String (enum: Cash on Delivery|UPI)",
+  "paymentStatus": "String (enum: PENDING|PAID|FAILED|EXPIRED|CANCELLED, default PENDING; for Cash on Delivery it stays PENDING)",
+  "paymentRef": "String (UPI only; printed in the QR; unique)",
+  "paymentExpiresAt": "Date (UPI only)",
+  "paidAt": "Date (UPI, when verified)",
+  "paymentTransactionId": "String (bank/provider reference of the verified payment; unique)",
+  "paymentVerifiedBy": "String (enum: webhook|admin)",
   "orderStatus": "String (enum: Pending|Confirmed|Preparing|Out for Delivery|Delivered|Cancelled)",
   "createdAt": "Date",
   "updatedAt": "Date"
@@ -331,7 +343,15 @@ a JSON body with `Content-Type: application/json`, the session cookie, and the h
 | POST | /api/orders | Auth | Place order |
 | GET | /api/orders | Auth | Order history |
 | GET | /api/orders/:id | Auth | Order details (owner or admin) |
-| PUT | /api/orders/:id/cancel | Customer | Cancel your own order — owner only, **Pending** only (admins: 403, use the admin endpoint) |
+| PUT | /api/orders/:id/cancel | Customer | Cancel your own order — owner only, **Pending** only (admins: 403, use the admin endpoint). An unpaid UPI order is cancelled and its cart restored; a **paid** UPI order answers 409 (refund needed) |
+
+### Payments (UPI QR)
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /api/payments/methods | Auth | Methods checkout may offer; UPI is `available` only when `UPI_ID` is set |
+| POST | /api/payments/upi | Auth | Turn the cart into a **Pending** UPI order and return the QR. Body: `{ deliveryAddress }`. An `amount` sent by the client is ignored: the server prices the cart |
+| GET | /api/payments/:orderId | Owner/Admin | Payment status; the QR is included only while it is pending and in time |
+| POST | /api/payments/webhook | Signature | Payment result from a provider. `X-Payment-Signature` = hex HMAC-SHA256 of the raw body. 503 unless `PAYMENT_WEBHOOK_SECRET` is set. **The only write outside CSRF** |
 
 ### Admin
 | Method | Endpoint | Auth | Description |
@@ -341,7 +361,8 @@ a JSON body with `Content-Type: application/json`, the session cookie, and the h
 | DELETE | /api/admin/users/:id | Admin | Delete a user with no orders; **deactivate** one who has orders (history kept) |
 | PUT | /api/admin/users/:id/reactivate | Admin | Reactivate a deactivated user (404 unknown, 409 already active) |
 | GET | /api/admin/orders | Admin | All orders |
-| PUT | /api/admin/orders/:id/status | Admin | Change order status (legal lifecycle steps only; 409 otherwise) |
+| PUT | /api/admin/orders/:id/status | Admin | Change order status (legal lifecycle steps only; 409 otherwise; an unpaid UPI order can only be cancelled) |
+| PUT | /api/admin/orders/:id/payment | Admin | Confirm/reject a UPI payment: `{ status: "PAID"\|"FAILED", transactionId }` (bank reference required for PAID) |
 | GET | /api/admin/export/orders | Admin | Export CSV (streams); values are quoted, and spreadsheet formulas in user-typed text are neutralised |
 
 ### Users
@@ -373,9 +394,51 @@ Defined once in `utils/constants.js` (`ORDER_TRANSITIONS`); the admin page mirro
 
 - Any other change is refused with **409**. Status changes are atomic (the expected current status is part of the update filter), so two simultaneous changes cannot both win.
 - A customer can cancel only their **own Pending** order (`PUT /api/orders/:id/cancel`); admins use `PUT /api/admin/orders/:id/status`.
-- Cancelled orders do not count towards revenue, average order value, popular foods, top spenders or revenue-by-date on the dashboard (they still appear in the order count and the per-status counts).
+- A **UPI order is created Pending and unpaid**; it can move forward (Confirmed …) only after its payment is verified (see [UPI QR payments](#upi-qr-payments)). Until then it can only be cancelled.
+- Cancelled orders, and UPI orders whose payment is not **PAID**, do not count towards revenue, average order value, popular foods, top spenders or revenue-by-date on the dashboard (they still appear in the order count and the per-status counts).
 - Placing an order claims the cart atomically, so pressing "Place order" twice creates exactly one order: a request that loses the race gets 409 ("already placed"); one that arrives after the cart was consumed gets 400 ("Your cart is empty").
 - If an order is placed at the very moment a cart is being changed, the cart request answers **409** ("Your cart was just checked out…").
+
+---
+
+## UPI QR payments
+
+Checkout offers **Cash on Delivery** (unchanged) and **Online UPI QR Payment**.
+
+### Workflow
+1. Checkout → choose *UPI* → **Pay with UPI QR**. The browser sends only the delivery address to `POST /api/payments/upi`.
+2. The server runs the **same checkout as Cash on Delivery** (prices from the database, availability checks, atomic cart claim), creates a **Pending** order with `paymentMethod: "UPI"`, `paymentStatus: "PENDING"`, a unique `paymentRef` (`FH` + 16 hex) and an expiry, and answers with the QR picture, the exact amount and the payment link. There is no tax or delivery fee in this project, so the amount is the sum of price × quantity. **An amount sent by the browser is ignored.**
+3. The page shows the order summary, *Amount to Pay: ₹X*, the QR, a countdown and a *waiting* indicator, and polls `GET /api/payments/:orderId` every 5 seconds. Scanning the QR or opening a UPI app changes nothing on the server.
+4. The payment becomes **PAID** only when the server receives a **verified** result, in one of two ways:
+   - **Signed webhook** `POST /api/payments/webhook` (needs `PAYMENT_WEBHOOK_SECRET`). The caller sends the JSON body and `X-Payment-Signature: <hex HMAC-SHA256 of the exact body bytes>`. Body: `{ "paymentRef": "FH…", "status": "SUCCESS" | "FAILED", "amount": 249.9, "transactionId": "…" }` (`amount` in rupees, required for SUCCESS).
+   - **Admin confirmation** `PUT /api/admin/orders/:id/payment` (Admin → Orders → open the order). The admin checks the bank statement, and types the bank reference (UTR). The amount is not typed: it is the order's own total.
+5. The page then shows **"Payment verified"** (or *failed / expired / cancelled*). The order stays **Pending** until an admin *Confirms* it as usual: the kitchen cannot start an unpaid UPI order (409).
+
+### Rules the server enforces
+- Webhook: no secret configured → 503; missing/wrong signature → 401 (constant-time compare); payload validated; unknown `paymentRef` → 404; **paid amount ≠ order total → 400 and the order is not marked paid**.
+- Repeated notification (same transaction) → 200 *already processed*, nothing changes. A different transaction for an already-paid order → 409. One transaction id cannot pay two orders (unique index).
+- `FAILED` from the provider, customer *Cancel*, or running out of time (`UPI_PAYMENT_WINDOW_MINUTES`) → the order is **Cancelled**, the payment is FAILED / CANCELLED / EXPIRED, and the **cart is restored** (unless the customer already started a new one). A background job (every 60 s) and the status endpoint both close expired payments.
+- A **paid** UPI order cannot be cancelled by the customer (409, contact the restaurant); a payment that arrives **after** the order was cancelled/expired is recorded but the order stays Cancelled and a *manual refund required* warning is logged.
+- Every state change is one atomic update whose filter names the expected state, so two simultaneous notifications cannot both win.
+- Dashboard revenue, popular foods, top spenders and revenue-by-date count a UPI order only when it is **PAID**.
+
+### Setup
+1. Put your merchant UPI ID in `.env`: `UPI_ID=yourshop@yourbank`, `UPI_PAYEE_NAME=Your Shop`. Without `UPI_ID`, UPI is simply not offered.
+2. Optional automatic verification: set `PAYMENT_WEBHOOK_SECRET` (≥ 32 chars) and make your provider (or your own script) call the webhook. A signing example:
+   ```bash
+   BODY='{"paymentRef":"FH0123456789ABCDEF","status":"SUCCESS","amount":249.9,"transactionId":"UTR123456789012"}'
+   SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$PAYMENT_WEBHOOK_SECRET" | awk '{print $NF}')
+   curl -X POST http://localhost:5000/api/payments/webhook -H "Content-Type: application/json" -H "X-Payment-Signature: $SIG" -d "$BODY"
+   ```
+3. Without a webhook, an admin verifies payments by hand (bank statement → *Mark as PAID* with the UTR).
+
+### Limitations (please read)
+- **No payment provider (Razorpay, Cashfree, PhonePe PG …) is integrated or tested.** The QR is a *static merchant UPI link with a dynamic amount*: a plain UPI ID never calls our server, so the app cannot know by itself that money arrived. Automatic confirmation needs a provider account, and a small adapter that translates the provider's webhook (its own field names and signature scheme) into the body above. The generic signed webhook and the admin confirmation are real and tested, but nothing in this repository has been run against a live bank or provider.
+- The order reference (`tr=`) in the QR is honoured only by merchant accounts; personal UPI IDs may ignore it, so match payments by amount, time and UTR.
+- **No refunds**: refunding a paid-then-cancelled order, a late payment, or an amount mismatch is manual.
+- The QR/UPI link shows a *fixed amount that a user could edit in their UPI app*; that is why the server compares the verified amount with the order total and refuses a mismatch.
+- A paid UPI order still needs the admin's normal *Confirm* step.
+- The unit/frontend tests mock the database; `tests/integration/payments.test.js` covers the real-database behaviour and needs `npm run test:integration` on a real MongoDB.
 
 ---
 
@@ -401,6 +464,7 @@ app.use(express.static())               // 4. Serve frontend files (before the s
 app.use(express.json({ limit: '100kb' }))// 5. Parse JSON bodies (form bodies are not parsed)
 app.use(session({...}))                 // 6. Session management (MongoDB store)
 app.use('/api', rateLimiters...)        // 7. Rate limits: API, login, register, orders, password change
+app.post('/api/payments/webhook')        // 7b. Payment webhook: before CSRF, authenticated by HMAC signature instead
 app.use('/api', csrfProtection)         // 8. CSRF: origin + JSON + token on writes
 app.use('/api/...')                     // 9. Route handlers
 app.use(notFound)                       // 10. 404 handler
@@ -439,14 +503,14 @@ Location: `services/analyticsService.js`
 
 ### getDashboardStats()
 ```javascript
-// 1. Total orders (all) and revenue / average order value (Cancelled orders excluded)
+// 1. Total orders (all) and revenue / average order value (Cancelled orders and unpaid UPI orders excluded)
 Order.aggregate([{ $group: { _id: null, totalOrders: {$sum:1} } }])
 Order.aggregate([{ $match: { orderStatus: { $ne: 'Cancelled' } } }, { $group: { _id: null, totalRevenue: {$sum:'$totalAmount'}, avgOrderValue: {$avg:'$totalAmount'} } }])
 
 // 2. Orders grouped by status
 Order.aggregate([{ $group: { _id: '$orderStatus', count: {$sum:1} } }, { $sort: {count:-1} }])
 
-// 3. Popular foods (unwind items; Cancelled orders excluded)
+// 3. Popular foods (unwind items; Cancelled and unpaid UPI orders excluded)
 Order.aggregate([
   { $match: { orderStatus: { $ne: 'Cancelled' } } },
   { $unwind: '$items' },
@@ -455,7 +519,7 @@ Order.aggregate([
   { $limit: 5 }
 ])
 
-// 4. Revenue by date (last 7 days; Cancelled orders excluded)
+// 4. Revenue by date (last 7 days; Cancelled and unpaid UPI orders excluded)
 Order.aggregate([
   { $match: { createdAt: { $gte: sevenDaysAgo }, orderStatus: { $ne: 'Cancelled' } } },
   { $group: { _id: { $dateToString: {format:'%Y-%m-%d', date:'$createdAt'} }, revenue: {$sum:'$totalAmount'} } }
@@ -558,6 +622,10 @@ Copy `.env.example` to `.env`. The server validates everything at startup (`conf
 | `RATE_LIMIT_DISABLED` | no | `true` turns rate limiting off (local load testing only) |
 | `ENABLE_DEMO_LOGIN` | no | One-click demo buttons on the login page. Default: on in development, **off in production** |
 | `ALLOW_SEED_IN_PRODUCTION` | no | `npm run seed` erases the database, so it refuses to run in production unless this is `true` |
+| `UPI_ID` | no | Your merchant UPI ID (`name@bank`). Empty = the UPI option is hidden/disabled and only Cash on Delivery is offered. Printed in the QR, so it is public, not a secret |
+| `UPI_PAYEE_NAME` | no | Name shown by the customer's UPI app. Default `FoodieHub` |
+| `UPI_PAYMENT_WINDOW_MINUTES` | no | Minutes to pay before the order is cancelled and the cart restored. 2–120, default `15` |
+| `PAYMENT_WEBHOOK_SECRET` | no | Shared secret for `POST /api/payments/webhook` (**≥ 32 characters**). The webhook answers 503 while it is empty |
 
 ---
 
@@ -734,7 +802,7 @@ For this project, we use a local single-node MongoDB instance which provides str
 
 These are deliberate scope limits of a college project, not hidden bugs:
 
-- **Payments**: Cash on Delivery only; there is no payment gateway, tax, delivery fee or stock count (availability is a manual on/off switch per food).
+- **Payments**: Cash on Delivery, plus UPI QR (see its own limitations in [UPI QR payments](#upi-qr-payments): no payment gateway is integrated, no refunds). There is no tax, delivery fee or stock count (availability is a manual on/off switch per food).
 - **No e-mail / SMS and no "forgot password"**: a user who forgets their password cannot reset it themselves (a logged-in user can change it from *Profile*).
 - **Cancelling**: a customer can cancel only while the order is **Pending**; after that only an admin can cancel (up to *Preparing*).
 - **Not paginated**: a customer's own order history and the admin user list (the menu, admin food list and admin order list are paginated).

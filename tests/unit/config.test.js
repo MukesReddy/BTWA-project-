@@ -149,3 +149,62 @@ describe("cookie, CORS, proxy, rate-limit and demo settings", () => {
     expect(() => { "use strict"; c.nodeEnv = "x"; }).toThrow();
   });
 });
+
+describe("UPI payment settings", () => {
+  const dev = (over = {}) => ({ NODE_ENV: "development", MONGO_URI: "mongodb://x/y", SESSION_SECRET: "s".repeat(10), ...over });
+
+  test("nothing set → UPI is off, the webhook is off, the window defaults to 15 minutes (Cash on Delivery needs no setup)", () => {
+    expect(loadConfig(dev()).payment).toEqual({
+      upiEnabled: false, upiId: "", upiPayeeName: "", windowMinutes: 15, webhookSecret: "", webhookEnabled: false,
+    });
+  });
+
+  test("a valid UPI_ID turns UPI on; the payee name defaults to FoodieHub; the settings are frozen", () => {
+    const c = loadConfig(dev({ UPI_ID: "shop.name@okicici" }));
+    expect(c.payment).toMatchObject({ upiEnabled: true, upiId: "shop.name@okicici", upiPayeeName: "FoodieHub" });
+    expect(Object.isFrozen(c.payment)).toBe(true);
+    expect(loadConfig(dev({ UPI_ID: "9876543210@ybl", UPI_PAYEE_NAME: " Asha's Kitchen " })).payment.upiPayeeName).toBe("Asha's Kitchen");
+  });
+
+  test.each(["shop", "shop@", "@bank", "sh op@bank", "shop@bank@x", "shop@1bank", "<b>@bank", "a@b", `${"x".repeat(70)}@bank`])(
+    "malformed UPI_ID %p is a startup problem",
+    (upiId) => {
+      expect(problemsOf(dev({ UPI_ID: upiId })).join()).toMatch(/UPI_ID/);
+    }
+  );
+
+  test("payee name: control characters, angle brackets and over-long names are rejected", () => {
+    for (const name of ["a<b", "a\nb", "x".repeat(61)]) {
+      expect(problemsOf(dev({ UPI_ID: "shop@okicici", UPI_PAYEE_NAME: name })).join()).toMatch(/UPI_PAYEE_NAME/);
+    }
+  });
+
+  test("payment window: whole minutes 2-120 only", () => {
+    expect(loadConfig(dev({ UPI_PAYMENT_WINDOW_MINUTES: "30" })).payment.windowMinutes).toBe(30);
+    for (const bad of ["1", "121", "abc", "1.5", "-5"]) {
+      expect(problemsOf(dev({ UPI_PAYMENT_WINDOW_MINUTES: bad })).join()).toMatch(/UPI_PAYMENT_WINDOW_MINUTES/);
+    }
+  });
+
+  test("webhook secret: 32+ characters and not a placeholder, or the server refuses to start", () => {
+    const good = "q".repeat(12) + "Zk3!" + "r".repeat(20);
+    const c = loadConfig(dev({ PAYMENT_WEBHOOK_SECRET: good }));
+    expect(c.payment.webhookEnabled).toBe(true);
+    expect(c.payment.webhookSecret).toBe(good);
+    expect(problemsOf(dev({ PAYMENT_WEBHOOK_SECRET: "short-secret" })).join()).toMatch(/PAYMENT_WEBHOOK_SECRET/);
+    expect(problemsOf(dev({ PAYMENT_WEBHOOK_SECRET: "replace_with_a_strong_random_secret_here" })).join()).toMatch(/PAYMENT_WEBHOOK_SECRET/);
+  });
+
+  test("production: UPI without a webhook secret is allowed (admin verification) but warns", () => {
+    const c = loadConfig(production({ UPI_ID: "shop@okicici" }));
+    expect(c.payment.upiEnabled).toBe(true);
+    expect(c.warnings.join()).toMatch(/without PAYMENT_WEBHOOK_SECRET/);
+    expect(loadConfig(production()).warnings.join()).not.toMatch(/PAYMENT_WEBHOOK_SECRET/);
+  });
+
+  test("the config never echoes a rejected UPI_ID or secret back in the error text", () => {
+    const text = problemsOf(dev({ UPI_ID: "bad id@x", PAYMENT_WEBHOOK_SECRET: "tooshort-secret-value" })).join(" ");
+    expect(text).not.toContain("bad id@x");
+    expect(text).not.toContain("tooshort-secret-value");
+  });
+});

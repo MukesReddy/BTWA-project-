@@ -13,6 +13,7 @@ const { sendSuccess, sendError, sanitizeUser, escapeRegex, csvCell } = require("
 const { ORDER_STATUSES } = require("../utils/constants");
 const { Readable, Transform } = require("stream"); // BTWA Module 5: Node.js Streams
 const { transitionOrderStatus } = require("../services/orderService"); // atomic status change + EventEmitter
+const { recordPaymentResult } = require("../services/paymentService"); // verified payment results (UPI)
 const { revokeUserSessions } = require("../utils/sessions");
 const logger = require("../utils/logger");
 
@@ -124,6 +125,35 @@ const updateOrderStatus = async (req, res, next) => {
     const { order: updatedOrder } = await transitionOrderStatus(req.params.id, status);
 
     return sendSuccess(res, 200, `Order status updated to ${status}`, updatedOrder);
+  } catch (error) {
+    if (error.statusCode) return sendError(res, error.statusCode, error.message);
+    next(error);
+  }
+};
+
+/**
+ * @route   PUT /api/admin/orders/:id/payment
+ * @desc    Confirm (PAID) or reject (FAILED) an online UPI payment after checking the bank statement
+ * @access  Admin
+ * Body:    { status: "PAID" | "FAILED", transactionId }  ← the bank reference (UTR) is required for PAID
+ * The amount is not typed by the admin: it is the order's server-side total. If the bank shows a different amount,
+ * do NOT mark it paid: refund or contact the customer. All rules (duplicates, atomicity): paymentService.recordPaymentResult.
+ */
+const verifyOrderPayment = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    const transactionId = typeof req.body.transactionId === "string" ? req.body.transactionId.trim() : undefined;
+    const { order, duplicate, closedBeforePayment } = await recordPaymentResult({
+      orderId: req.params.id,
+      outcome: status,
+      transactionId: transactionId || undefined,
+      source: "admin",
+    });
+    let message = duplicate ? "Payment was already recorded; nothing changed" : `Payment marked as ${status}`;
+    if (closedBeforePayment) {
+      message += ". The order had already been cancelled or had expired: arrange a refund or recreate the order manually";
+    }
+    return sendSuccess(res, 200, message, order);
   } catch (error) {
     if (error.statusCode) return sendError(res, error.statusCode, error.message);
     next(error);
@@ -306,6 +336,7 @@ module.exports = {
   getAllUsers,
   getAllOrders,
   updateOrderStatus,
+  verifyOrderPayment,
   exportOrdersCSV,
   deleteUser,
   reactivateUser,

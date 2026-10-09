@@ -218,6 +218,28 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || 'badge-pending'}">${esc(status)}</span>`;
 }
 
+/* ── Payment badge ──────────────────────────────────────────
+   Shown only for online (UPI) orders. Cash on Delivery orders have no online payment to display.
+   The status words come from the server (paymentStatus); the page never invents "Paid". */
+function paymentBadge(order) {
+  if (!order || order.paymentMethod !== 'UPI') return '';
+  const status = order.paymentStatus || 'PENDING';
+  const map = {
+    'PENDING':   ['badge-pending',   'Awaiting payment'],
+    'PAID':      ['badge-delivered', 'Paid'],
+    'FAILED':    ['badge-cancelled', 'Payment failed'],
+    'EXPIRED':   ['badge-cancelled', 'Payment expired'],
+    'CANCELLED': ['badge-cancelled', 'Payment cancelled'],
+  };
+  const [cls, label] = map[status] || map.PENDING;
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+/** An unpaid UPI order the customer can still pay (the payment page shows the live state). */
+function canCompletePayment(order) {
+  return Boolean(order) && order.paymentMethod === 'UPI' && order.paymentStatus === 'PENDING' && order.orderStatus === 'Pending';
+}
+
 /* ── Order lifecycle ────────────────────────────────────────
    MIRROR of ORDER_TRANSITIONS in utils/constants.js (the server enforces it and answers 409 for
    anything else; this copy only decides which choices the pages offer). A test fails if the two differ. */

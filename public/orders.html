@@ -38,8 +38,16 @@
     // "Cancel Order" is offered only while the order is Pending (the server enforces the same rule).
     let currentRole = null; // set in loadOrders(); only customer accounts may cancel (admins use the admin panel)
 
+    function payButton(order) {
+      return currentRole === 'customer' && canCompletePayment(order)
+        ? `<button class="btn btn-primary btn-sm" data-action="payOrder" data-id="${esc(order._id)}">Complete payment</button>`
+        : '';
+    }
+
     function cancelButton(order) {
-      return currentRole === 'customer' && canCustomerCancel(order.orderStatus)
+      // A PAID online order cannot be cancelled by the customer (it needs a refund): the server refuses it too.
+      const paidOnline = order.paymentMethod === 'UPI' && order.paymentStatus === 'PAID';
+      return currentRole === 'customer' && canCustomerCancel(order.orderStatus) && !paidOnline
         ? `<button class="btn btn-danger btn-sm" data-action="cancelOrder" data-id="${esc(order._id)}">Cancel Order</button>`
         : '';
     }
@@ -98,9 +106,10 @@
                   </div>
                   <div style="text-align:right">
                     ${statusBadge(order.orderStatus)}
-                    <div style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">${esc(order.paymentMethod)}</div>
+                    <div style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">${esc(order.paymentMethod)} ${paymentBadge(order)}</div>
                   </div>
                   <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                    ${payButton(order)}
                     <button class="btn btn-ghost btn-sm" data-action="showOrderDetail" data-id="${esc(order._id)}">View Details →</button>
                     ${cancelButton(order)}
                   </div>
@@ -140,7 +149,7 @@
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:.85rem;color:var(--text-muted)">Payment</span>
-            <span style="font-size:.9rem">${esc(order.paymentMethod)}</span>
+            <span style="font-size:.9rem">${esc(order.paymentMethod)} ${paymentBadge(order)}</span>
           </div>
         </div>
 
@@ -181,7 +190,7 @@
             ${esc(order.deliveryAddress?.state)} — ${esc(order.deliveryAddress?.pincode)}
           </div>
         </div>
-        ${cancelButton(order) ? `<div style="margin-top:1.5rem;text-align:right">${cancelButton(order)}</div>` : ''}`;
+        ${(payButton(order) || cancelButton(order)) ? `<div style="margin-top:1.5rem;text-align:right;display:flex;gap:.5rem;justify-content:flex-end">${payButton(order)}${cancelButton(order)}</div>` : ''}`;
     }
 
     function closeModal() {
@@ -194,7 +203,8 @@
 
     registerActions({
       showOrderDetail: (data) => showOrderDetail(data.id),
-      cancelOrder:     (data) => cancelOrder(data.id)
+      cancelOrder:     (data) => cancelOrder(data.id),
+      payOrder:        (data) => navigateTo(`/checkout.html?pay=${encodeURIComponent(data.id)}`)
     });
 
     document.addEventListener('DOMContentLoaded', loadOrders);

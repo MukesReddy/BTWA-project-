@@ -42,10 +42,13 @@ const roundMoney = (amount) => Math.round(amount * 100) / 100;
  *
  * @param {string} userId - Logged-in user ID
  * @param {object} deliveryAddress - Delivery address object
- * @param {string} paymentMethod - Payment method string
+ * @param {string} paymentMethod - Payment method string ("Cash on Delivery" or "UPI")
+ * @param {object} [paymentFields] - extra payment fields for the new order (UPI: paymentStatus, paymentRef,
+ *   paymentExpiresAt). They are set by services/paymentService.js only; they can never override the
+ *   user, items, total or lifecycle status, which are applied after them.
  * @returns {object} Created order document
  */
-const createOrder = async (userId, deliveryAddress, paymentMethod) => {
+const createOrder = async (userId, deliveryAddress, paymentMethod, paymentFields = {}) => {
   // 1. Get user's cart
   const cart = await Cart.findOne({ user: userId });
   if (!cart || cart.items.length === 0) {
@@ -118,6 +121,7 @@ const createOrder = async (userId, deliveryAddress, paymentMethod) => {
   let order;
   try {
     order = await Order.create({
+      ...paymentFields,
       user: userId,
       items: orderItems,
       totalAmount,
@@ -155,6 +159,28 @@ const createOrder = async (userId, deliveryAddress, paymentMethod) => {
 // The "orderStatusUpdated" event is emitted only after a successful update, with the status the
 // order REALLY moved from (the one in the filter), never a stale read.
 
+/**
+ * An unpaid online order was closed (cancelled / failed / expired): give the customer their cart back so they can
+ * simply try again. Only when they have no cart at all right now: if they already started a new one (the unique
+ * Cart.user index answers 11000) we leave it alone and never merge into someone's current cart.
+ * Best effort: failing to restore must never fail the cancellation itself.
+ * @returns {boolean} whether the cart was restored
+ */
+const restoreCartFromOrder = async (order) => {
+  const items = (order.items || [])
+    .filter((item) => item.food)
+    .map((item) => ({ food: item.food, quantity: item.quantity, price: item.price }));
+  if (!items.length) return false;
+  const owner = order.user && order.user._id ? order.user._id : order.user;
+  try {
+    await Cart.create({ user: owner, items });
+    return true;
+  } catch (error) {
+    if (error.code !== 11000) logger.error(`Could not restore the cart of order ${order._id}: ${error.message}`);
+    return false;
+  }
+};
+
 const isLegalTransition = (from, to) => (ORDER_TRANSITIONS[from] || []).includes(to);
 
 const allowedNext = (from) => {
@@ -178,7 +204,7 @@ const announceStatusChange = (orderId, oldStatus, newStatus) =>
  * @returns {{order, oldStatus}}
  */
 const transitionOrderStatus = async (orderId, newStatus) => {
-  const current = await Order.findById(orderId).select("orderStatus").lean();
+  const current = await Order.findById(orderId).select("orderStatus paymentMethod paymentStatus").lean();
   if (!current) throw httpError(404, "Order not found");
 
   const oldStatus = current.orderStatus;
@@ -189,17 +215,40 @@ const transitionOrderStatus = async (orderId, newStatus) => {
     );
   }
 
-  const order = await Order.findOneAndUpdate(
-    { _id: orderId, orderStatus: oldStatus }, // ← the expected current status makes this atomic
-    { $set: { orderStatus: newStatus } },
-    { new: true, runValidators: true }
-  ).populate("user", "name email");
+  // Online (UPI) orders: the kitchen must not start on an order whose payment is not VERIFIED. Unpaid → only Cancel.
+  const isUpi = current.paymentMethod === "UPI";
+  const paymentStatus = current.paymentStatus || "PENDING";
+  if (isUpi && paymentStatus !== "PAID" && newStatus !== "Cancelled") {
+    throw httpError(
+      409,
+      `This is a UPI order and its payment is not verified yet (payment status: ${paymentStatus}). Verify the payment first; an unpaid order can only be cancelled.`
+    );
+  }
+
+  const filter = { _id: orderId, orderStatus: oldStatus }; // ← the expected current status makes this atomic
+  const changes = { orderStatus: newStatus };
+  let closesUnpaidPayment = false;
+  if (isUpi && newStatus !== "Cancelled") {
+    filter.paymentStatus = "PAID"; // still paid at the instant of the update, not just when we read it
+  } else if (isUpi && paymentStatus === "PENDING") {
+    filter.paymentStatus = "PENDING"; // cancelling an unpaid order also closes its payment (a late payment is then flagged)
+    changes.paymentStatus = "CANCELLED";
+    closesUnpaidPayment = true;
+  } else if (isUpi) {
+    logger.warn(`Order ${orderId} was PAID online and is now Cancelled: a refund must be arranged manually`);
+  }
+
+  const order = await Order.findOneAndUpdate(filter, { $set: changes }, { new: true, runValidators: true }).populate(
+    "user",
+    "name email"
+  );
 
   if (!order) {
     await explainLostRace(orderId, "This order was changed by someone else while you were updating it");
   }
 
   announceStatusChange(order._id, oldStatus, newStatus);
+  if (closesUnpaidPayment) await restoreCartFromOrder(order);
   return { order, oldStatus };
 };
 
@@ -209,29 +258,40 @@ const transitionOrderStatus = async (orderId, newStatus) => {
  * @returns {{order, oldStatus}}
  */
 const cancelOrderAsCustomer = async (orderId, userId) => {
-  const current = await Order.findById(orderId).select("user orderStatus").lean();
+  const current = await Order.findById(orderId).select("user orderStatus paymentMethod paymentStatus").lean();
   if (!current) throw httpError(404, "Order not found");
 
   if (!current.user || current.user.toString() !== String(userId)) {
     throw httpError(403, "You are not authorized to cancel this order");
+  }
+  const isUpi = current.paymentMethod === "UPI";
+  if (isUpi && current.paymentStatus === "PAID") {
+    // Money has already arrived and there is no automatic refund: a person has to handle it.
+    throw httpError(409, "This order was already paid online, so it cannot be cancelled here. Please contact the restaurant to cancel it and arrange a refund.");
   }
   if (!CUSTOMER_CANCEL_FROM.includes(current.orderStatus)) {
     throw httpError(409, `Only Pending orders can be cancelled. This order is "${current.orderStatus}".`);
   }
 
   const oldStatus = current.orderStatus;
-  const order = await Order.findOneAndUpdate(
-    { _id: orderId, user: userId, orderStatus: oldStatus }, // owner AND expected status in the filter
-    { $set: { orderStatus: "Cancelled" } },
-    { new: true, runValidators: true }
-  ).populate("user", "name email");
+  const filter = { _id: orderId, user: userId, orderStatus: oldStatus }; // owner AND expected status in the filter
+  const changes = { orderStatus: "Cancelled" };
+  if (isUpi) {
+    filter.paymentStatus = "PENDING"; // never cancel an order that was paid a moment ago
+    changes.paymentStatus = "CANCELLED";
+  }
+  const order = await Order.findOneAndUpdate(filter, { $set: changes }, { new: true, runValidators: true }).populate(
+    "user",
+    "name email"
+  );
 
   if (!order) {
     await explainLostRace(orderId, "This order can no longer be cancelled");
   }
 
   announceStatusChange(order._id, oldStatus, "Cancelled");
+  if (isUpi) await restoreCartFromOrder(order);
   return { order, oldStatus };
 };
 
-module.exports = { createOrder, transitionOrderStatus, cancelOrderAsCustomer, isLegalTransition };
+module.exports = { createOrder, transitionOrderStatus, cancelOrderAsCustomer, isLegalTransition, restoreCartFromOrder, httpError };

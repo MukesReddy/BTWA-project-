@@ -37,6 +37,11 @@ const cartRoutes = require("./routes/cartRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const userRoutes = require("./routes/userRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const { receiveWebhook } = require("./controllers/paymentController");
+const { startExpiryJob } = require("./services/paymentService");
+
+const WEBHOOK_PATH = "/api/payments/webhook";
 
 // ─── Validate configuration (fail fast) ───────────────────────────────────────
 // BTWA Module 4: Configuration. A production server with a missing/placeholder SESSION_SECRET,
@@ -127,7 +132,15 @@ const createApp = (appConfig = config, options = {}) => {
   // 5. Body parser — the API only speaks JSON (BTWA Module 7: Express built-in middleware).
   // 100 kB is far above any legitimate request here. Form-encoded bodies are NOT parsed any more:
   // a plain HTML <form> on another site cannot send application/json, which is one of the CSRF layers.
-  app.use(express.json({ limit: "100kb" }));
+  // The payment webhook is signed over the EXACT bytes the provider sent, so for that one path we keep a copy of the raw body.
+  app.use(
+    express.json({
+      limit: "100kb",
+      verify: (req, res, buf) => {
+        if (req.originalUrl.split("?")[0] === WEBHOOK_PATH) req.rawBody = buf;
+      },
+    })
+  );
 
   // 6. Session Middleware
   // BTWA Module 10: express-session, cookies
@@ -166,7 +179,13 @@ const createApp = (appConfig = config, options = {}) => {
   app.post("/api/auth/login", limiters.login, limiters.loginPerIp);
   app.post("/api/auth/register", limiters.register);
   app.post("/api/orders", limiters.orders);
+  app.post("/api/payments/upi", limiters.orders); // starting a UPI payment creates an order too: same per-user limit
   app.put("/api/users/password", limiters.passwordChange); // failed attempts only; per logged-in user
+
+  // 7b. Payment webhook: the ONLY route registered before (and therefore outside) CSRF protection. A payment provider
+  // is a server, not a browser: it has no session cookie or CSRF token. It is authenticated by an HMAC signature of the
+  // raw body instead (see controllers/paymentController.js → receiveWebhook). Every other write below keeps CSRF.
+  app.post(WEBHOOK_PATH, receiveWebhook);
 
   // 8. CSRF protection for every state-changing /api request (origin + JSON-only + session token).
   // See middleware/csrfMiddleware.js for why SameSite and JSON-only are not enough on their own.
@@ -181,6 +200,7 @@ const createApp = (appConfig = config, options = {}) => {
   app.use("/api/orders", orderRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/users", userRoutes);
+  app.use("/api/payments", paymentRoutes);
 
   // ─── Health Check Route ─────────────────────────────────────────────────────
   app.get("/api/health", (req, res) => {
@@ -226,6 +246,9 @@ const startServer = async () => {
     console.log(`🌍 Environment: ${config.nodeEnv}\n`);
   });
 
+  // Closes UPI payments nobody paid in time (and gives those customers their carts back). Unref'd timer.
+  const expiryJob = startExpiryJob();
+
   server.on("error", (error) => {
     console.error(`❌ Could not start the server: ${error.message}`);
     process.exit(1);
@@ -237,6 +260,7 @@ const startServer = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`${reason}: shutting down`);
+    clearInterval(expiryJob);
     server.close(() => mongoose.disconnect().finally(() => process.exit(0)));
     server.closeIdleConnections(); // keep-alive sockets would otherwise delay the shutdown
     setTimeout(() => process.exit(1), 10000).unref(); // never hang forever

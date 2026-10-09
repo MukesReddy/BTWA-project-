@@ -13,6 +13,9 @@ const crypto = require("crypto");
 
 const NODE_ENVS = ["development", "production", "test"];
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
+const MIN_WEBHOOK_SECRET_LENGTH = 32;
+// UPI virtual payment address: handle@psp, e.g. shop@okicici. (NPCI: letters, digits, . - _ before the @.)
+const UPI_ID_PATTERN = /^[a-zA-Z0-9._-]{2,64}@[a-zA-Z][a-zA-Z0-9.-]{1,48}$/;
 
 // Values people copy from .env.example / tutorials. Never acceptable as a real secret.
 const PLACEHOLDER_SECRET = /(replace_with|fallback_secret|changeme|change_me|your[_-]?secret|secret123|example)/i;
@@ -164,6 +167,33 @@ const loadConfig = (env = process.env) => {
     warnings.push("ENABLE_DEMO_LOGIN=true in production: demo credentials are exposed on the login page.");
   }
 
+  // ── UPI QR payments (optional) ──────────────────────────────────────────
+  // Without UPI_ID the "Online UPI QR" option is simply unavailable (Cash on Delivery keeps working).
+  // These values are PUBLIC by nature (they are printed inside the QR code); the secret is only the webhook key.
+  const upiId = isBlank(env.UPI_ID) ? "" : String(env.UPI_ID).trim();
+  if (upiId && !UPI_ID_PATTERN.test(upiId)) {
+    problems.push(`UPI_ID must look like name@bank (letters, digits, . _ - before the @), e.g. shop@okbank (got a value of ${upiId.length} characters)`);
+  }
+  let upiPayeeName = isBlank(env.UPI_PAYEE_NAME) ? "" : String(env.UPI_PAYEE_NAME).trim();
+  if (upiId && !upiPayeeName) upiPayeeName = "FoodieHub";
+  if (upiPayeeName && (upiPayeeName.length > 60 || /[\u0000-\u001f<>]/.test(upiPayeeName))) {
+    problems.push("UPI_PAYEE_NAME must be at most 60 characters and must not contain control characters or < >");
+  }
+  let upiWindowMinutes = 15;
+  if (!isBlank(env.UPI_PAYMENT_WINDOW_MINUTES)) {
+    upiWindowMinutes = Number(env.UPI_PAYMENT_WINDOW_MINUTES);
+    if (!Number.isInteger(upiWindowMinutes) || upiWindowMinutes < 2 || upiWindowMinutes > 120) {
+      problems.push(`UPI_PAYMENT_WINDOW_MINUTES must be a whole number between 2 and 120 (got "${env.UPI_PAYMENT_WINDOW_MINUTES}")`);
+    }
+  }
+  const webhookSecret = isBlank(env.PAYMENT_WEBHOOK_SECRET) ? "" : String(env.PAYMENT_WEBHOOK_SECRET);
+  if (webhookSecret && (webhookSecret.length < MIN_WEBHOOK_SECRET_LENGTH || PLACEHOLDER_SECRET.test(webhookSecret))) {
+    problems.push(`PAYMENT_WEBHOOK_SECRET must be a real secret of at least ${MIN_WEBHOOK_SECRET_LENGTH} characters (not a placeholder)`);
+  }
+  if (upiId && !webhookSecret && isProduction) {
+    warnings.push("UPI payments are enabled without PAYMENT_WEBHOOK_SECRET: payments can only be confirmed by an admin after checking the bank statement (no automatic verification).");
+  }
+
   if (problems.length) throw new ConfigError(problems);
 
   return Object.freeze({
@@ -184,6 +214,14 @@ const loadConfig = (env = process.env) => {
     }),
     rateLimitEnabled,
     demoLoginEnabled,
+    payment: Object.freeze({
+      upiEnabled: Boolean(upiId),
+      upiId,
+      upiPayeeName,
+      windowMinutes: upiWindowMinutes,
+      webhookSecret,                       // empty = webhook endpoint answers 503
+      webhookEnabled: Boolean(webhookSecret),
+    }),
     warnings: Object.freeze(warnings),
   });
 };

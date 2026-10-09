@@ -32,6 +32,10 @@
         return;
       }
 
+      // checkout.html?pay=<orderId> → come back to an unpaid UPI payment (e.g. after a refresh or from My Orders)
+      const payId = new URLSearchParams(window.location.search).get('pay');
+      if (payId && /^[a-f0-9]{24}$/i.test(payId)) return resumePayment(payId);
+
       // Load cart
       const { ok, data, status } = await apiCall('GET', '/cart');
       if (!ok || !data.data?.items?.length) {
@@ -46,6 +50,12 @@
 
       const cart = data.data;
       cartTotal  = cart.total;
+
+      // Which payment methods does the server offer? (UPI only when the shop has configured a UPI ID.)
+      // If this call fails we simply do not offer UPI: Cash on Delivery always works.
+      const methodsRes = await apiCall('GET', '/payments/methods');
+      const upiAvailable = Boolean(methodsRes.ok &&
+        (methodsRes.data.data?.methods || []).some(m => m.id === 'UPI' && m.available));
       const addr = user.address || {};
 
       content.innerHTML = `
@@ -84,6 +94,15 @@
                   <div>
                     <div style="font-weight:700">💵 Cash on Delivery</div>
                     <div style="font-size:.85rem;color:var(--text-secondary)">Pay when your order arrives</div>
+                  </div>
+                </label>
+                <label id="upiOption" style="display:flex;align-items:center;gap:.75rem;padding:1rem;border:2px solid var(--border);border-radius:var(--radius);margin-top:.75rem;cursor:${upiAvailable ? 'pointer' : 'not-allowed'};opacity:${upiAvailable ? '1' : '.6'}">
+                  <input type="radio" name="payment" value="UPI" ${upiAvailable ? '' : 'disabled'} />
+                  <div>
+                    <div style="font-weight:700">📱 Online UPI QR Payment</div>
+                    <div style="font-size:.85rem;color:var(--text-secondary)">${upiAvailable
+                      ? 'Scan a QR code with any UPI app (Google Pay, PhonePe, Paytm…)'
+                      : 'Not available right now'}</div>
                   </div>
                 </label>
               </div>
@@ -130,6 +149,24 @@
         </div>`;
 
       document.getElementById('placeOrderBtn').addEventListener('click', placeOrder);
+      document.querySelectorAll('input[name="payment"]').forEach(radio => radio.addEventListener('change', syncPaymentChoice));
+    }
+
+    // ── Choosing a method ────────────────────────────────────
+    function selectedPaymentMethod() {
+      return document.querySelector('input[name="payment"]:checked')?.value || 'Cash on Delivery';
+    }
+    function syncPaymentChoice() {
+      const upi = selectedPaymentMethod() === 'UPI';
+      document.getElementById('placeOrderBtn').innerHTML = upi ? '📱 Pay with UPI QR' : '✅ Place Order';
+    }
+    function readAddress() {
+      return {
+        street:  document.getElementById('street').value.trim(),
+        city:    document.getElementById('city').value.trim(),
+        state:   document.getElementById('state').value.trim(),
+        pincode: document.getElementById('pincode').value.trim(),
+      };
     }
 
     async function placeOrder() {
@@ -145,6 +182,7 @@
       }
 
       const btn = document.getElementById('placeOrderBtn');
+      if (selectedPaymentMethod() === 'UPI') return startUpiPayment({ street, city, state, pincode });
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Placing order…';
 
@@ -162,6 +200,179 @@
         btn.disabled = false;
         btn.innerHTML = '✅ Place Order';
       }
+    }
+
+    // ═══ Online UPI QR payment ═══════════════════════════════════════════════
+    // The QR is only a payment REQUEST. This page never decides that the order is paid: it shows "verified" only
+    // when GET /api/payments/:id reports paymentStatus PAID, which the server sets after a signed webhook or an
+    // admin's bank check. Scanning, or tapping "Open UPI app", changes nothing here.
+    let POLL_MS = 5000;           // how often the server is asked for the payment status
+    let pollTimer = null;
+    let countdownTimer = null;
+    let currentPayment = null;
+    let pollInFlight = false;
+
+    function stopPaymentTimers() {
+      clearInterval(pollTimer);
+      clearInterval(countdownTimer);
+      pollTimer = null;
+      countdownTimer = null;
+    }
+
+    async function startUpiPayment(address) {
+      const btn = document.getElementById('placeOrderBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Creating payment…';
+
+      // Only the address is sent. The amount is calculated by the server from the cart and current prices.
+      const { ok, data } = await apiCall('POST', '/payments/upi', { deliveryAddress: address });
+      if (!ok) {
+        showAlert('alertBox', data.message || 'Could not start the payment', 'error');
+        btn.disabled = false;
+        syncPaymentChoice();
+        return;
+      }
+      try { window.history.replaceState(null, '', `/checkout.html?pay=${encodeURIComponent(data.data.orderId)}`); } catch {}
+      renderPayment(data.data);
+    }
+
+    async function resumePayment(orderId) {
+      const content = document.getElementById('checkoutContent');
+      const { ok, data } = await apiCall('GET', `/payments/${orderId}`);
+      if (!ok) {
+        content.classList.remove('loading-overlay');
+        content.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><h3>Payment not found</h3>
+          <p>${esc(data.message || 'This payment could not be loaded')}</p>
+          <a href="/orders.html" class="btn btn-primary">My Orders</a></div>`;
+        return;
+      }
+      renderPayment(data.data);
+    }
+
+    // Draw the payment page for whatever state the SERVER reports.
+    function renderPayment(p) {
+      stopPaymentTimers();
+      currentPayment = p;
+      const content = document.getElementById('checkoutContent');
+      content.classList.remove('loading-overlay');
+      const amount = formatPrice(p.amount);
+
+      const summary = `
+        <div class="order-summary">
+          <h3 style="font-weight:700;margin-bottom:1.25rem">Your Order</h3>
+          ${(p.items || []).map(item => `
+            <div style="display:flex;justify-content:space-between;padding:.4rem 0;font-size:.9rem;border-bottom:1px solid var(--border)">
+              <span>${esc(item.name)} × ${esc(item.quantity)}</span>
+              <span style="font-weight:600">${esc(formatPrice(item.price * item.quantity))}</span>
+            </div>`).join('')}
+          <div class="summary-row"><span>Delivery</span><span style="color:var(--success)">FREE</span></div>
+          <div class="summary-row total"><span>Total</span><span class="amount">${esc(amount)}</span></div>
+          <p style="font-size:.8rem;color:var(--text-muted);margin-top:.75rem">Order ref: ${esc(p.paymentRef || '')}</p>
+        </div>`;
+
+      if (p.paymentStatus === 'PENDING' && p.qrDataUrl) {
+        // Only an inline PNG is ever put into the <img>, and only a upi:// link into the anchor.
+        const qrOk = /^data:image\/png;base64,[A-Za-z0-9+\/=]+$/.test(p.qrDataUrl);
+        const linkOk = typeof p.upiUri === 'string' && p.upiUri.startsWith('upi://pay?');
+        content.innerHTML = `
+          <div class="checkout-layout">
+            <div class="card" id="upiPanel">
+              <div class="card-header"><h3 style="font-weight:700">📱 Pay with UPI</h3></div>
+              <div class="card-body" style="text-align:center">
+                <p id="payAmount" style="font-size:1.6rem;font-weight:800;margin-bottom:1rem">Amount to Pay: ${esc(amount)}</p>
+                ${qrOk ? `<img id="upiQr" src="${p.qrDataUrl}" alt="UPI QR code to pay ${esc(amount)}" width="280" height="280"
+                     style="background:#fff;padding:.5rem;border-radius:var(--radius);max-width:100%;height:auto" />` : ''}
+                <p style="margin-top:1rem">Paying to <strong>${esc(p.payee?.name || '')}</strong> <span style="color:var(--text-muted)">(${esc(p.payee?.upiId || '')})</span></p>
+                ${linkOk ? `<a id="openUpiApp" class="btn btn-primary" style="margin:.5rem 0" href="${esc(p.upiUri)}">Open UPI app (on your phone)</a>` : ''}
+                <ol style="text-align:left;max-width:380px;margin:1rem auto;font-size:.9rem;color:var(--text-secondary)">
+                  <li>Open any UPI app (Google Pay, PhonePe, Paytm, BHIM…).</li>
+                  <li>Scan this QR code and check that the amount is <strong>${esc(amount)}</strong>.</li>
+                  <li>Complete the payment. Keep this page open.</li>
+                </ol>
+                <div id="payStatusLine" style="display:flex;align-items:center;justify-content:center;gap:.6rem;font-weight:600">
+                  <span class="spinner"></span>
+                  <span id="payStatusText">Waiting for payment confirmation…</span>
+                  <span id="payCountdown" style="color:var(--text-muted)"></span>
+                </div>
+                <p style="font-size:.8rem;color:var(--text-muted);margin:.75rem 0">
+                  Scanning or paying in your app does not confirm the order by itself: this page updates only after the payment has been verified.
+                </p>
+                <button type="button" class="btn btn-ghost" id="cancelPaymentBtn">✖ Cancel payment</button>
+                <a href="/orders.html" class="btn btn-ghost">My Orders</a>
+              </div>
+            </div>
+            <div>${summary}</div>
+          </div>`;
+        document.getElementById('cancelPaymentBtn').addEventListener('click', cancelPayment);
+        startCountdown(p.expiresAt);
+        pollTimer = setInterval(pollPayment, POLL_MS);
+        return;
+      }
+
+      // A finished (or no longer payable) payment. Wording comes from the server's verified status.
+      const view = {
+        PAID:      { icon: '✅', title: 'Payment verified',  tone: 'success' },
+        FAILED:    { icon: '❌', title: 'Payment failed',    tone: 'error' },
+        EXPIRED:   { icon: '⏰', title: 'Payment expired',   tone: 'error' },
+        CANCELLED: { icon: '🚫', title: 'Payment cancelled', tone: 'error' },
+        PENDING:   { icon: '⏳', title: 'Payment pending',   tone: 'info' },
+      }[p.paymentStatus] || { icon: '⏳', title: 'Payment pending', tone: 'info' };
+      const retry = p.paymentStatus === 'FAILED' || p.paymentStatus === 'EXPIRED' || p.paymentStatus === 'CANCELLED';
+      content.innerHTML = `
+        <div class="checkout-layout">
+          <div class="card" id="paymentResult" data-payment-status="${esc(p.paymentStatus)}">
+            <div class="card-body" style="text-align:center;padding:2.5rem 1.5rem">
+              <div style="font-size:3rem">${view.icon}</div>
+              <h2 id="paymentResultTitle" style="margin:.5rem 0">${esc(view.title)}</h2>
+              <p id="paymentResultText" style="color:var(--text-secondary);margin-bottom:1.5rem">${esc(p.message || '')}</p>
+              ${p.paymentStatus === 'PAID' ? '<p style="margin-bottom:1.5rem">The restaurant will now confirm your order.</p>' : ''}
+              ${retry ? '<a href="/cart.html" class="btn btn-primary">Back to Cart</a> ' : ''}
+              <a href="/orders.html" class="btn ${retry ? 'btn-ghost' : 'btn-primary'}">My Orders</a>
+            </div>
+          </div>
+          <div>${summary}</div>
+        </div>`;
+    }
+
+    function startCountdown(expiresAt) {
+      const el = document.getElementById('payCountdown');
+      const end = new Date(expiresAt).getTime();
+      const tick = () => {
+        const left = Math.max(0, Math.floor((end - Date.now()) / 1000));
+        const text = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+        if (el) el.textContent = left > 0 ? `· time left ${text}` : '· checking…';
+        if (left === 0) { clearInterval(countdownTimer); countdownTimer = null; pollPayment(); } // the SERVER decides if it expired
+      };
+      if (!Number.isNaN(end)) { tick(); if (countdownTimer === null) countdownTimer = setInterval(tick, 1000); }
+    }
+
+    async function pollPayment() {
+      if (!currentPayment || pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const { ok, data } = await apiCall('GET', `/payments/${currentPayment.orderId}`);
+        if (ok) {
+          if (data.data.paymentStatus !== 'PENDING') renderPayment(data.data);
+        } else {
+          const text = document.getElementById('payStatusText');
+          if (text) text.textContent = 'Could not refresh the status. Retrying…';
+        }
+      } finally {
+        pollInFlight = false;
+      }
+    }
+
+    async function cancelPayment() {
+      if (!currentPayment) return;
+      if (!window.confirm('Cancel this payment? If you have already paid, do NOT cancel: wait for confirmation or contact the restaurant.')) return;
+      const btn = document.getElementById('cancelPaymentBtn');
+      if (btn) btn.disabled = true;
+      const { ok, data } = await apiCall('PUT', `/orders/${currentPayment.orderId}/cancel`);
+      if (!ok) {
+        showAlert('alertBox', data.message || 'Could not cancel the payment', 'error');
+        if (btn) btn.disabled = false;
+      }
+      await pollPayment();          // show whatever the server now says: cancelled, or paid in the meantime
     }
 
     document.addEventListener('DOMContentLoaded', loadCheckout);

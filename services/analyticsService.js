@@ -23,7 +23,12 @@ const Food = require("../models/Food");
  */
 // A cancelled order earned nothing, so every money figure below ignores it. The order COUNTS
 // (totalOrders, ordersByStatus) deliberately still include cancelled orders.
-const EXCLUDE_CANCELLED = { orderStatus: { $ne: "Cancelled" } };
+const EXCLUDE_CANCELLED = {
+  orderStatus: { $ne: "Cancelled" },
+  // An online (UPI) order is only a real sale once its payment is VERIFIED. Cash on Delivery and old orders
+  // (no paymentMethod "UPI") count as before.
+  $or: [{ paymentMethod: { $ne: "UPI" } }, { paymentStatus: "PAID" }],
+};
 
 const getDashboardStats = async () => {
   // 1. Total orders (all statuses) and revenue (cancelled orders excluded) using aggregation pipelines

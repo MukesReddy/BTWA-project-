@@ -9,3 +9,8 @@ process.env.TRUST_PROXY = "";
 process.env.COOKIE_SECURE = "";
 process.env.ENABLE_DEMO_LOGIN = "";
 process.env.PORT = "";
+// UPI payments are OFF unless a test builds its own app with these set (a developer's .env must not switch them on).
+process.env.UPI_ID = "";
+process.env.UPI_PAYEE_NAME = "";
+process.env.UPI_PAYMENT_WINDOW_MINUTES = "";
+process.env.PAYMENT_WEBHOOK_SECRET = "";

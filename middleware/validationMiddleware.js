@@ -346,6 +346,34 @@ const validateOrder = [
   handleValidationErrors,
 ];
 
+/**
+ * Start an online (UPI) payment: POST /api/payments/upi.
+ * Only the delivery address is read. The amount is NEVER taken from the request: the server prices the cart.
+ * (An "amount" / "totalAmount" field in the body is simply ignored: see paymentController.)
+ */
+const validateUpiPayment = [...addressRules("deliveryAddress", true), handleValidationErrors];
+
+/**
+ * Admin confirms or rejects an online payment after checking the bank statement:
+ * PUT /api/admin/orders/:id/payment  { status: "PAID"|"FAILED", transactionId }
+ * The bank reference (UTR) is mandatory for PAID: it is what makes a payment traceable and a duplicate detectable.
+ */
+const TRANSACTION_ID_RULE = /^[A-Za-z0-9_-]{6,64}$/;
+const validateAdminPayment = [
+  body("status").isIn(["PAID", "FAILED"]).withMessage('status must be "PAID" or "FAILED"'),
+  body("transactionId").custom((value, { req }) => {
+    if (value === undefined || value === null || value === "") {
+      if (req.body.status === "PAID") throw new Error("The bank transaction id (UTR) is required to mark a payment as paid");
+      return true;
+    }
+    if (typeof value !== "string" || !TRANSACTION_ID_RULE.test(value.trim())) {
+      throw new Error("Transaction id must be 6-64 letters, digits, - or _");
+    }
+    return true;
+  }),
+  handleValidationErrors,
+];
+
 // ─── Query-string validation (P1.8) ──────────────────────────────────────────
 // Query parameters end up inside MongoDB filters, so each one must be a plain string of the
 // expected shape. (The app also uses Express's "simple" query parser, so ?a[$ne]=x is never
@@ -448,6 +476,8 @@ module.exports = {
   validateCartItem,
   validateCartUpdate,
   validateOrder,
+  validateUpiPayment,
+  validateAdminPayment,
   validateProfile,
   validatePasswordChange,
   validateFoodQuery,

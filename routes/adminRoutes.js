@@ -11,13 +11,14 @@ const {
   getAllUsers,
   getAllOrders,
   updateOrderStatus,
+  verifyOrderPayment,
   exportOrdersCSV,
   deleteUser,
   reactivateUser,
 } = require("../controllers/adminController");
 const { isAuthenticated } = require("../middleware/authMiddleware");
 const { isAdmin } = require("../middleware/adminMiddleware");
-const { validateIdParam, validateUserQuery, validateOrderQuery } = require("../middleware/validationMiddleware");
+const { validateIdParam, validateUserQuery, validateOrderQuery, validateAdminPayment } = require("../middleware/validationMiddleware");
 
 // Apply auth + admin middleware to ALL admin routes
 router.use(isAuthenticated, isAdmin);
@@ -36,6 +37,7 @@ router.put("/users/:id/reactivate", reactivateUser); // undo a deactivation (see
 // Order management
 router.get("/orders", validateOrderQuery, getAllOrders);
 router.put("/orders/:id/status", updateOrderStatus);
+router.put("/orders/:id/payment", validateAdminPayment, verifyOrderPayment); // confirm/reject a UPI payment (UTR required)
 
 // CSV Export (BTWA Module 5: Streams demo)
 router.get("/export/orders", exportOrdersCSV);
